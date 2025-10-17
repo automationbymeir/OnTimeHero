@@ -6,108 +6,68 @@ class GamificationService {
   constructor() {
     this.achievements = [
       {
-        id: 'first_event',
-        title: 'First Steps',
-        description: 'Complete your first event on time',
-        icon: 'emoji-events',
-        xpReward: 50,
-        badgeReward: 'rookie',
-        condition: { type: 'events_on_time', count: 1 },
-      },
-      {
-        id: 'streak_3',
-        title: 'Getting Started',
-        description: 'Maintain a 3-day streak',
-        icon: 'local-fire-department',
-        xpReward: 100,
-        badgeReward: 'consistent',
-        condition: { type: 'streak', count: 3 },
-      },
-      {
-        id: 'streak_7',
-        title: 'Week Warrior',
-        description: 'Maintain a 7-day streak',
-        icon: 'local-fire-department',
-        xpReward: 250,
-        badgeReward: 'dedicated',
-        condition: { type: 'streak', count: 7 },
-      },
-      {
-        id: 'streak_30',
-        title: 'Month Master',
-        description: 'Maintain a 30-day streak',
-        icon: 'local-fire-department',
-        xpReward: 1000,
-        badgeReward: 'legendary',
-        condition: { type: 'streak', count: 30 },
-      },
-      {
-        id: 'perfect_week',
-        title: 'Perfect Week',
-        description: 'Be on time for all events in a week',
-        icon: 'check-circle',
-        xpReward: 200,
-        badgeReward: 'perfectionist',
-        condition: { type: 'perfect_week', count: 1 },
-      },
-      {
         id: 'early_bird',
         title: 'Early Bird',
-        description: 'Arrive 10 minutes early to 5 events',
-        icon: 'schedule',
+        description: 'Arrive early to 10 events',
+        icon: '🐦',
         xpReward: 150,
-        badgeReward: 'punctual',
-        condition: { type: 'early_arrivals', count: 5 },
+        badgeReward: 'early_bird',
+        condition: { type: 'early_arrivals', count: 10 },
       },
       {
-        id: 'night_owl',
-        title: 'Night Owl',
-        description: 'Complete 10 evening events on time',
-        icon: 'nightlight-round',
+        id: 'punctuality_pro',
+        title: 'Punctuality Pro',
+        description: 'Maintain 95% punctuality for a week',
+        icon: '⏰',
         xpReward: 200,
-        badgeReward: 'nocturnal',
-        condition: { type: 'evening_events', count: 10 },
+        badgeReward: 'punctuality_pro',
+        condition: { type: 'punctuality_week', percent: 95 },
       },
       {
-        id: 'social_butterfly',
-        title: 'Social Butterfly',
-        description: 'Attend 20 social events on time',
-        icon: 'people',
-        xpReward: 300,
-        badgeReward: 'social',
-        condition: { type: 'social_events', count: 20 },
-      },
-      {
-        id: 'level_10',
-        title: 'Rising Star',
-        description: 'Reach level 10',
-        icon: 'star',
+        id: 'streak_master',
+        title: 'Streak Master',
+        description: 'Complete 20 events in a row on time',
+        icon: '🔥',
         xpReward: 500,
-        badgeReward: 'rising_star',
-        condition: { type: 'level', count: 10 },
+        badgeReward: 'streak_master',
+        condition: { type: 'streak', count: 20 },
       },
       {
-        id: 'level_20',
-        title: 'OnTime Legend',
-        description: 'Reach level 20',
-        icon: 'military-tech',
+        id: 'time_guardian',
+        title: 'Time Guardian',
+        description: 'Use phone lock feature for 50 events',
+        icon: '🛡️',
+        xpReward: 300,
+        badgeReward: 'time_guardian',
+        condition: { type: 'phone_lock_usage', count: 50 },
+      },
+      {
+        id: 'calendar_champion',
+        title: 'Calendar Champion',
+        description: 'Sync and manage 100 calendar events',
+        icon: '📅',
+        xpReward: 400,
+        badgeReward: 'calendar_champion',
+        condition: { type: 'calendar_events', count: 100 },
+      },
+      {
+        id: 'perfectionist',
+        title: 'Perfectionist',
+        description: 'Achieve 100% punctuality for a month',
+        icon: '💎',
         xpReward: 1000,
-        badgeReward: 'legend',
-        condition: { type: 'level', count: 20 },
+        badgeReward: 'perfectionist',
+        condition: { type: 'punctuality_month', percent: 100 },
       },
     ];
 
     this.badges = {
-      rookie: { name: 'Rookie', description: 'Just getting started', icon: 'emoji-events', color: '#9C27B0' },
-      consistent: { name: 'Consistent', description: 'Building good habits', icon: 'trending-up', color: '#2196F3' },
-      dedicated: { name: 'Dedicated', description: 'Week-long commitment', icon: 'fitness-center', color: '#4CAF50' },
-      legendary: { name: 'Legendary', description: 'Month-long mastery', icon: 'auto-awesome', color: '#ffd700' },
-      perfectionist: { name: 'Perfectionist', description: 'Perfect week achieved', icon: 'check-circle', color: '#ff6b6b' },
-      punctual: { name: 'Punctual', description: 'Always early', icon: 'schedule', color: '#ff9800' },
-      nocturnal: { name: 'Nocturnal', description: 'Night event specialist', icon: 'nightlight-round', color: '#673AB7' },
-      social: { name: 'Social', description: 'Social event champion', icon: 'people', color: '#E91E63' },
-      rising_star: { name: 'Rising Star', description: 'Level 10 achiever', icon: 'star', color: '#00BCD4' },
-      legend: { name: 'Legend', description: 'Level 20 master', icon: 'military-tech', color: '#FF5722' },
+      early_bird: { name: 'Early Bird', description: 'Arrive early to 10 events', icon: '🐦', color: '#4CAF50' },
+      punctuality_pro: { name: 'Punctuality Pro', description: 'Maintain 95% punctuality for a week', icon: '⏰', color: '#2196F3' },
+      streak_master: { name: 'Streak Master', description: 'Complete 20 events in a row on time', icon: '🔥', color: '#ff6b6b' },
+      time_guardian: { name: 'Time Guardian', description: 'Use phone lock feature for 50 events', icon: '🛡️', color: '#9C27B0' },
+      calendar_champion: { name: 'Calendar Champion', description: 'Sync and manage 100 calendar events', icon: '📅', color: '#ff9800' },
+      perfectionist: { name: 'Perfectionist', description: 'Achieve 100% punctuality for a month', icon: '💎', color: '#ffd700' },
     };
   }
 
@@ -179,35 +139,153 @@ class GamificationService {
       .get();
 
     const events = eventsSnapshot.docs.map(doc => doc.data());
-    return events.length > 0 && events.every(event => event.wasOnTime);
+    return events.length > 0 && events.every(event => event.arrivedOnTime === true);
   }
 
   async checkEarlyArrivals(count) {
     const currentUser = auth().currentUser;
-    const eventsSnapshot = await firestore()
-      .collection('events')
-      .where('userId', '==', currentUser.uid)
-      .where('status', '==', 'completed')
-      .where('wasEarly', '==', true)
-      .get();
+    if (!currentUser) return false;
 
-    return eventsSnapshot.size >= count;
+    try {
+      const eventsSnapshot = await firestore()
+        .collection('events')
+        .where('userId', '==', currentUser.uid)
+        .where('status', '==', 'completed')
+        .where('wasEarly', '==', true)
+        .get();
+
+      console.log(`📊 Early arrivals found: ${eventsSnapshot.size} (need ${count})`);
+      return eventsSnapshot.size >= count;
+    } catch (error) {
+      console.error('Error checking early arrivals:', error);
+      return false;
+    }
+  }
+
+  async checkPunctualityWeek(percent) {
+    const currentUser = auth().currentUser;
+    if (!currentUser) return false;
+
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const eventsSnapshot = await firestore()
+        .collection('events')
+        .where('userId', '==', currentUser.uid)
+        .where('startTime', '>=', firestore.Timestamp.fromDate(sevenDaysAgo))
+        .where('status', '==', 'completed')
+        .get();
+
+      const totalEvents = eventsSnapshot.size;
+      if (totalEvents === 0) return false;
+
+      const onTimeEvents = eventsSnapshot.docs.filter(doc =>
+        doc.data().arrivedOnTime === true
+      ).length;
+
+      const punctualityPercent = (onTimeEvents / totalEvents) * 100;
+      console.log(`📊 Week punctuality: ${punctualityPercent.toFixed(1)}% (need ${percent}%)`);
+
+      return punctualityPercent >= percent;
+    } catch (error) {
+      console.error('Error checking punctuality week:', error);
+      return false;
+    }
+  }
+
+  async checkPunctualityMonth(percent) {
+    const currentUser = auth().currentUser;
+    if (!currentUser) return false;
+
+    try {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const eventsSnapshot = await firestore()
+        .collection('events')
+        .where('userId', '==', currentUser.uid)
+        .where('startTime', '>=', firestore.Timestamp.fromDate(thirtyDaysAgo))
+        .where('status', '==', 'completed')
+        .get();
+
+      const totalEvents = eventsSnapshot.size;
+      if (totalEvents === 0) return false;
+
+      const onTimeEvents = eventsSnapshot.docs.filter(doc =>
+        doc.data().arrivedOnTime === true
+      ).length;
+
+      const punctualityPercent = (onTimeEvents / totalEvents) * 100;
+      console.log(`📊 Month punctuality: ${punctualityPercent.toFixed(1)}% (need ${percent}%)`);
+
+      return punctualityPercent >= percent;
+    } catch (error) {
+      console.error('Error checking punctuality month:', error);
+      return false;
+    }
+  }
+
+  async checkPhoneLockUsage(count) {
+    const currentUser = auth().currentUser;
+    if (!currentUser) return false;
+
+    try {
+      const eventsSnapshot = await firestore()
+        .collection('events')
+        .where('userId', '==', currentUser.uid)
+        .where('status', '==', 'completed')
+        .where('usedPhoneLock', '==', true)
+        .get();
+
+      console.log(`📊 Phone lock usage: ${eventsSnapshot.size} events (need ${count})`);
+      return eventsSnapshot.size >= count;
+    } catch (error) {
+      console.error('Error checking phone lock usage:', error);
+      return false;
+    }
+  }
+
+  async checkCalendarEvents(count) {
+    const currentUser = auth().currentUser;
+    if (!currentUser) return false;
+
+    try {
+      const eventsSnapshot = await firestore()
+        .collection('events')
+        .where('userId', '==', currentUser.uid)
+        .get();
+
+      console.log(`📊 Calendar events synced: ${eventsSnapshot.size} (need ${count})`);
+      return eventsSnapshot.size >= count;
+    } catch (error) {
+      console.error('Error checking calendar events:', error);
+      return false;
+    }
   }
 
   async checkEveningEvents(count) {
     const currentUser = auth().currentUser;
-    const eveningStart = new Date();
-    eveningStart.setHours(18, 0, 0, 0);
 
+    // Get all completed events where user was on time
     const eventsSnapshot = await firestore()
       .collection('events')
       .where('userId', '==', currentUser.uid)
-      .where('startTime', '>=', firestore.Timestamp.fromDate(eveningStart))
       .where('status', '==', 'completed')
-      .where('wasOnTime', '==', true)
+      .where('arrivedOnTime', '==', true)
       .get();
 
-    return eventsSnapshot.size >= count;
+    // Filter for evening events (after 6 PM)
+    let eveningCount = 0;
+    eventsSnapshot.docs.forEach(doc => {
+      const data = doc.data();
+      const startTime = data.startTime.toDate();
+      if (startTime.getHours() >= 18) {
+        eveningCount++;
+      }
+    });
+
+    return eveningCount >= count;
   }
 
   async checkSocialEvents(count) {
@@ -218,7 +296,7 @@ class GamificationService {
       .collection('events')
       .where('userId', '==', currentUser.uid)
       .where('status', '==', 'completed')
-      .where('wasOnTime', '==', true)
+      .where('arrivedOnTime', '==', true)
       .get();
 
     let socialEventCount = 0;
@@ -226,8 +304,8 @@ class GamificationService {
       const event = doc.data();
       const title = event.title.toLowerCase();
       const description = (event.description || '').toLowerCase();
-      
-      if (socialKeywords.some(keyword => 
+
+      if (socialKeywords.some(keyword =>
         title.includes(keyword) || description.includes(keyword)
       )) {
         socialEventCount++;
@@ -235,6 +313,46 @@ class GamificationService {
     });
 
     return socialEventCount >= count;
+  }
+
+  async checkEventsOnTime(count) {
+    const currentUser = auth().currentUser;
+    if (!currentUser) return false;
+
+    try {
+      const eventsSnapshot = await firestore()
+        .collection('events')
+        .where('userId', '==', currentUser.uid)
+        .where('status', '==', 'completed')
+        .where('arrivedOnTime', '==', true)
+        .get();
+
+      return eventsSnapshot.size >= count;
+    } catch (error) {
+      console.error('Error checking events on time:', error);
+      return false;
+    }
+  }
+
+  async checkStreak(count) {
+    const currentUser = auth().currentUser;
+    if (!currentUser) return false;
+
+    try {
+      const userDoc = await firestore()
+        .collection('users')
+        .doc(currentUser.uid)
+        .get();
+
+      if (userDoc.exists) {
+        const userData = userDoc.data();
+        return (userData.currentStreak || 0) >= count;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error checking streak:', error);
+      return false;
+    }
   }
 
   async awardAchievement(achievement, userStats) {
@@ -411,6 +529,129 @@ class GamificationService {
 
   async getAllAchievements() {
     return this.achievements;
+  }
+
+  async awardPoints(points, reason) {
+    const currentUser = auth().currentUser;
+    if (!currentUser) return 0;
+
+    try {
+      console.log(`🏆 Awarding ${points} points for: ${reason}`);
+      
+      // Try to update in Firestore first
+      const userRef = firestore().collection('users').doc(currentUser.uid);
+      const userDoc = await userRef.get();
+      
+      if (userDoc.exists) {
+        const currentPoints = userDoc.data().xp || 0;
+        const newPoints = currentPoints + points;
+        
+        await userRef.update({
+          xp: newPoints,
+          lastPointsUpdate: firestore.FieldValue.serverTimestamp(),
+          lastPointsReason: reason,
+        });
+        
+        console.log(`✅ Points updated in Firestore: ${currentPoints} → ${newPoints}`);
+        return newPoints;
+      } else {
+        // Create user document if it doesn't exist
+        await userRef.set({
+          xp: points,
+          badgeCount: 0,
+          currentStreak: 0,
+          punctualityScore: 0,
+          lastPointsUpdate: firestore.FieldValue.serverTimestamp(),
+          lastPointsReason: reason,
+          createdAt: firestore.FieldValue.serverTimestamp(),
+        });
+        
+        console.log(`✅ New user document created with ${points} points`);
+        return points;
+      }
+    } catch (error) {
+      console.error('❌ Error awarding points in Firestore:', error);
+      
+      // Fallback to local storage
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const localStats = await AsyncStorage.getItem('userStats');
+        let stats = localStats ? JSON.parse(localStats) : { xp: 0, badgeCount: 0, currentStreak: 0, punctualityScore: 0 };
+        
+        stats.xp = (stats.xp || 0) + points;
+        stats.lastPointsUpdate = new Date().toISOString();
+        stats.lastPointsReason = reason;
+        
+        await AsyncStorage.setItem('userStats', JSON.stringify(stats));
+        console.log(`✅ Points saved locally: ${stats.xp} points`);
+        return stats.xp;
+      } catch (localError) {
+        console.error('❌ Error saving points locally:', localError);
+        return 0;
+      }
+    }
+  }
+
+  async checkAndAwardBadges() {
+    const currentUser = auth().currentUser;
+    if (!currentUser) {
+      console.log('⚠️ No current user, skipping badge check');
+      return;
+    }
+
+    try {
+      console.log('🎖️ Checking for badge eligibility...');
+
+      // Get user stats
+      const userRef = firestore().collection('users').doc(currentUser.uid);
+      const userDoc = await userRef.get();
+
+      if (userDoc.exists) {
+        const userData = userDoc.data();
+        const currentBadges = userData.achievements || [];
+
+        // Check each achievement
+        for (const achievement of this.achievements) {
+          if (currentBadges.includes(achievement.id)) continue; // Already awarded
+
+          let isEligible = false;
+
+          switch (achievement.condition.type) {
+            case 'events_on_time':
+              isEligible = await this.checkEventsOnTime(achievement.condition.count);
+              break;
+            case 'streak':
+              isEligible = await this.checkStreak(achievement.condition.count);
+              break;
+            case 'perfect_week':
+              isEligible = await this.checkPerfectWeek(userData);
+              break;
+            case 'punctuality_week':
+              isEligible = await this.checkPunctualityWeek(achievement.condition.percent);
+              break;
+            case 'punctuality_month':
+              isEligible = await this.checkPunctualityMonth(achievement.condition.percent);
+              break;
+            case 'early_arrivals':
+              isEligible = await this.checkEarlyArrivals(achievement.condition.count);
+              break;
+            case 'phone_lock_usage':
+              isEligible = await this.checkPhoneLockUsage(achievement.condition.count);
+              break;
+            case 'calendar_events':
+              isEligible = await this.checkCalendarEvents(achievement.condition.count);
+              break;
+          }
+
+          if (isEligible) {
+            await this.awardAchievement(achievement, userData);
+            console.log(`🎖️ Badge awarded: ${achievement.title}`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error checking badges:', error);
+    }
   }
 }
 

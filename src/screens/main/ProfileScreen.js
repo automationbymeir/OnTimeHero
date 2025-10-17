@@ -14,6 +14,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import firestore from '@react-native-firebase/firestore';
 import auth from '@react-native-firebase/auth';
 import moment from 'moment';
+import GamificationService from '../../services/GamificationService';
 
 const { width } = Dimensions.get('window');
 
@@ -31,6 +32,7 @@ const ProfileScreen = ({ navigation }) => {
   });
   const [userData, setUserData] = useState(null);
   const [recentAchievements, setRecentAchievements] = useState([]);
+  const [badgeDetails, setBadgeDetails] = useState([]);
 
   useEffect(() => {
     loadUserStats();
@@ -63,7 +65,7 @@ const ProfileScreen = ({ navigation }) => {
           photoURL: data.photoURL || currentUser.photoURL,
         });
         
-        setUserStats({
+        const stats = {
           xp: data.xp || 0,
           level: data.level || 1,
           currentStreak: data.currentStreak || 0,
@@ -73,7 +75,19 @@ const ProfileScreen = ({ navigation }) => {
           punctualityScore: data.punctualityScore || 0,
           badges: data.badges || [],
           achievements: data.achievements || [],
-        });
+        };
+        setUserStats(stats);
+
+        // Load badge details from GamificationService
+        const allBadges = await GamificationService.getAllBadges();
+        const userBadgeDetails = (data.badges || []).map(badgeId => ({
+          id: badgeId,
+          ...allBadges[badgeId]
+        })).filter(badge => badge.name); // Filter out invalid badges
+        setBadgeDetails(userBadgeDetails);
+
+        console.log('📊 User badges:', data.badges);
+        console.log('📊 Badge details:', userBadgeDetails);
 
         // Load recent achievements
         const recentAchievementsData = await firestore()
@@ -165,10 +179,17 @@ const ProfileScreen = ({ navigation }) => {
 
     const colors = badgeColors[index % badgeColors.length];
 
+    // Check if icon is an emoji (starts with emoji character) or Material Icon name
+    const isEmoji = badge.icon && /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]/u.test(badge.icon);
+
     return (
       <View key={badge.id} style={styles.badgeContainer}>
         <LinearGradient colors={colors} style={styles.badge}>
-          <Icon name={badge.icon} size={30} color="#fff" />
+          {isEmoji ? (
+            <Text style={styles.badgeEmoji}>{badge.icon}</Text>
+          ) : (
+            <Icon name={badge.icon || 'emoji-events'} size={30} color="#fff" />
+          )}
         </LinearGradient>
         <Text style={styles.badgeName}>{badge.name}</Text>
         <Text style={styles.badgeDescription}>{badge.description}</Text>
@@ -287,11 +308,11 @@ const ProfileScreen = ({ navigation }) => {
         )}
 
         {/* Badges */}
-        {userStats.badges.length > 0 && (
+        {badgeDetails.length > 0 && (
           <View style={styles.badgesSection}>
             <Text style={styles.sectionTitle}>🎖️ Badges</Text>
             <View style={styles.badgesGrid}>
-              {userStats.badges.map(renderBadge)}
+              {badgeDetails.map(renderBadge)}
             </View>
           </View>
         )}
@@ -546,6 +567,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 8,
+  },
+  badgeEmoji: {
+    fontSize: 32,
   },
   badgeName: {
     fontSize: 12,

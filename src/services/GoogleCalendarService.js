@@ -6,6 +6,9 @@ import auth from '@react-native-firebase/auth';
 class GoogleCalendarService {
   constructor() {
     this.configureGoogleSignIn();
+    this.tokenPromise = null; // Prevent concurrent getTokens calls
+    this.cachedTokens = null;
+    this.tokenExpiry = null;
   }
 
   configureGoogleSignIn() {
@@ -21,6 +24,43 @@ class GoogleCalendarService {
       console.log('Google Sign-In configured successfully with Web Client ID');
     } catch (error) {
       console.error('Error configuring Google Sign-In:', error);
+    }
+  }
+
+  async getTokensSafely() {
+    try {
+      // If we already have a token request in progress, wait for it
+      if (this.tokenPromise) {
+        console.log('Token request already in progress, waiting...');
+        return await this.tokenPromise;
+      }
+
+      // Check if we have cached tokens that are still valid
+      if (this.cachedTokens && this.tokenExpiry && new Date() < this.tokenExpiry) {
+        console.log('Using cached tokens');
+        return this.cachedTokens;
+      }
+
+      // Create a new token request
+      console.log('Requesting new tokens...');
+      this.tokenPromise = GoogleSignin.getTokens();
+      
+      const tokens = await this.tokenPromise;
+      
+      // Cache the tokens for 50 minutes (tokens typically expire in 1 hour)
+      this.cachedTokens = tokens;
+      this.tokenExpiry = new Date(Date.now() + 50 * 60 * 1000); // 50 minutes from now
+      
+      // Clear the promise
+      this.tokenPromise = null;
+      
+      console.log('Tokens obtained and cached successfully');
+      return tokens;
+    } catch (error) {
+      // Clear the promise on error
+      this.tokenPromise = null;
+      console.error('Error getting tokens:', error);
+      throw error;
     }
   }
 
@@ -71,8 +111,8 @@ class GoogleCalendarService {
       }
 
       console.log('User signed in successfully:', userInfo.user?.email);
-      console.log('Getting tokens...');
-      const tokens = await GoogleSignin.getTokens();
+      console.log('Getting tokens safely...');
+      const tokens = await this.getTokensSafely();
       const accessToken = tokens.accessToken;
 
       if (!accessToken) {
@@ -147,12 +187,16 @@ class GoogleCalendarService {
         // Parse the event time properly with timezone handling
         const startDateTime = new Date(googleEvent.start.dateTime);
         const endDateTime = new Date(googleEvent.end.dateTime);
-        
+
         console.log('Processing event:', googleEvent.summary);
         console.log('Start dateTime from Google:', googleEvent.start.dateTime);
         console.log('Start dateTime parsed:', startDateTime);
         console.log('Start timezone:', googleEvent.start.timeZone);
-        
+        console.log('Event ID from Google:', googleEvent.id);
+
+        // Calculate travel time using Google Maps API
+        const travelTime = await this.calculateTravelTime(googleEvent.location);
+
         const eventData = {
           userId: currentUser.uid,
           googleEventId: googleEvent.id,
@@ -161,7 +205,7 @@ class GoogleCalendarService {
           startTime: firestore.Timestamp.fromDate(startDateTime),
           endTime: firestore.Timestamp.fromDate(endDateTime),
           location: googleEvent.location || '',
-          travelTime: this.estimateTravelTime(googleEvent.location),
+          travelTime: travelTime,
           status: 'upcoming',
           createdAt: firestore.Timestamp.now(),
           lastSynced: firestore.Timestamp.now(),
@@ -179,10 +223,45 @@ class GoogleCalendarService {
           const newEventRef = eventsRef.doc();
           batch.set(newEventRef, eventData);
           eventsToSave++;
+          console.log(`✅ Prepared new event for Firestore: ${googleEvent.summary} (ID: ${newEventRef.id})`);
         } else {
-          // Update existing event
-          batch.update(existingEvent.docs[0].ref, eventData);
+          // Update existing event, but check if it was recently modified locally
+          const existingData = existingEvent.docs[0].data();
+          console.log(`📝 Existing event "${googleEvent.summary}" status: ${existingData.status}`);
+
+          // Check if event was modified in the last 5 minutes (to prevent sync conflicts)
+          const lastModified = existingData.lastModified;
+          if (lastModified) {
+            const lastModifiedTime = lastModified.toDate ? lastModified.toDate() : new Date(lastModified);
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+            if (lastModifiedTime > fiveMinutesAgo) {
+              console.log(`⏰ Event was modified locally ${Math.round((Date.now() - lastModifiedTime.getTime()) / 1000 / 60)} minutes ago, skipping sync to prevent overwriting recent changes`);
+              continue;
+            }
+          }
+
+          // Don't overwrite completed events
+          if (existingData.status === 'completed') {
+            console.log(`⚠️ Event is completed, preserving status and only updating time/location`);
+            // Only update the time and location fields, but keep status as completed
+            const partialUpdate = {
+              title: eventData.title,
+              description: eventData.description,
+              location: eventData.location,
+              startTime: eventData.startTime,
+              endTime: eventData.endTime,
+              travelTime: eventData.travelTime,
+              timezone: eventData.timezone,
+              lastSynced: eventData.lastSynced,
+              // Keep existing status, arrivedOnTime, completedAt, and lastModified
+            };
+            batch.update(existingEvent.docs[0].ref, partialUpdate);
+          } else {
+            // Update normally for non-completed events
+            batch.update(existingEvent.docs[0].ref, eventData);
+          }
           eventsToSave++;
+          console.log(`✅ Prepared update for existing event: ${googleEvent.summary}`);
         }
       }
 
@@ -211,18 +290,33 @@ class GoogleCalendarService {
     }
   }
 
-  estimateTravelTime(location) {
-    // Simple estimation based on location
-    // In production, integrate with Google Maps API for accurate travel time
-    if (!location) return 15; // Default 15 minutes
-    
-    if (location.toLowerCase().includes('room') || 
+  async calculateTravelTime(location) {
+    // Use Google Maps API for accurate travel time calculation
+    if (!location) return 15; // Default 15 minutes if no location
+
+    // Check if it's an internal location (no need for travel time calculation)
+    if (location.toLowerCase().includes('room') ||
         location.toLowerCase().includes('office')) {
       return 5; // Same building
     } else if (location.toLowerCase().includes('building')) {
       return 10; // Different building
-    } else {
-      return 20; // External location
+    }
+
+    // For external locations, use Google Maps Distance Matrix API
+    try {
+      const GoogleMapsService = require('./GoogleMapsService').default;
+      const travelInfo = await GoogleMapsService.calculateTravelTimeFromHome(location);
+
+      if (travelInfo && !travelInfo.error && travelInfo.duration) {
+        console.log(`✅ Calculated travel time for "${location}": ${travelInfo.duration} minutes`);
+        return travelInfo.duration;
+      } else {
+        console.log(`⚠️ Could not calculate travel time for "${location}": ${travelInfo.error || 'Unknown error'}, using default`);
+        return 20; // Fallback to 20 minutes if API fails
+      }
+    } catch (error) {
+      console.error(`❌ Error calculating travel time for "${location}":`, error);
+      return 20; // Fallback to 20 minutes on error
     }
   }
 
@@ -323,6 +417,60 @@ class GoogleCalendarService {
       
     } catch (error) {
       console.error('Error syncing pending data:', error);
+    }
+  }
+
+  async getTodaysEvents() {
+    try {
+      console.log('Fetching today\'s events...');
+      
+      // Ensure the user is signed in with Calendar scope
+      const userInfo = await this.ensureSignedIn();
+      if (!userInfo) {
+        throw new Error('User not signed in');
+      }
+
+      const tokens = await this.getTokensSafely();
+      const accessToken = tokens.accessToken;
+
+      if (!accessToken) {
+        throw new Error('No access token available');
+      }
+
+      // Get today's date range
+      const startOfDay = moment().startOf('day').toISOString();
+      const endOfDay = moment().endOf('day').toISOString();
+
+      console.log('Fetching events for today:', startOfDay, 'to', endOfDay);
+
+      // Fetch today's events from Google Calendar API
+      const response = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
+        `timeMin=${startOfDay}&` +
+        `timeMax=${endOfDay}&` +
+        `singleEvents=true&` +
+        `orderBy=startTime`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Calendar API error:', response.status, errorData);
+        throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
+      }
+
+      const data = await response.json();
+      console.log('Today\'s events fetched:', data.items?.length || 0);
+      
+      return data.items || [];
+    } catch (error) {
+      console.error('Error fetching today\'s events:', error);
+      throw error;
     }
   }
 }

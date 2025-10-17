@@ -5,12 +5,36 @@ import moment from 'moment';
 
 class NotificationService {
   constructor() {
-    this.initialize();
-    this.createChannels();
+    this.configured = false;
+    this.initPromise = this.initialize();
   }
 
   async initialize() {
-    await this.configure();
+    try {
+      await this.configure();
+      this.createChannels();
+      this.configured = true;
+      console.log('✅ NotificationService initialized successfully');
+    } catch (error) {
+      console.error('❌ Failed to initialize NotificationService:', error);
+    }
+  }
+
+  async ensureConfigured() {
+    if (!this.configured) {
+      await this.initPromise;
+    }
+  }
+
+  // Convert string ID to numeric ID for notifications
+  hashStringToNumber(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return Math.abs(hash);
   }
 
   static initialize() {
@@ -30,7 +54,20 @@ class NotificationService {
 
         onNotification: function (notification) {
           console.log('NOTIFICATION:', notification);
-          
+
+          // Save notification to history when it's received
+          if (notification.foreground || !notification.userInteraction) {
+            NotificationService.prototype.saveNotificationToHistory({
+              id: notification.id,
+              type: notification.userInfo?.type || notification.data?.type || 'event',
+              title: notification.title,
+              message: notification.message,
+              eventId: notification.userInfo?.eventId || notification.data?.eventId,
+              timestamp: new Date().toISOString(),
+              read: false,
+            }).catch(err => console.error('Failed to save notification to history:', err));
+          }
+
           // Handle notification tap
           if (notification.userInteraction) {
             NotificationService.handleNotificationTap(notification);
@@ -51,25 +88,113 @@ class NotificationService {
     }
   }
 
-  async requestPermissions() {
+  async checkPermissions() {
     try {
-      console.log('📱 Requesting notification permissions...');
-      const granted = await PushNotification.requestPermissions();
-      console.log('📱 Notification permissions granted:', granted);
-      return granted;
+      console.log('📱 Checking current notification permissions...');
+      
+      // Check current permissions using a promise wrapper
+      const permissions = await new Promise((resolve, reject) => {
+        PushNotification.checkPermissions((permissions) => {
+          resolve(permissions);
+        });
+      });
+      
+      console.log('📱 Current notification permissions:', permissions);
+      
+      // Handle different response formats
+      if (permissions && typeof permissions === 'object') {
+        if (permissions.alert !== undefined && permissions.badge !== undefined && permissions.sound !== undefined) {
+          if (permissions.alert && permissions.badge && permissions.sound) {
+            console.log('✅ All notification permissions already granted');
+            return true;
+          } else {
+            console.log('⚠️ Some notification permissions not granted:', permissions);
+            return false;
+          }
+        } else {
+          // If the response format is different, assume success if permissions is truthy
+          console.log('✅ Notification permissions already granted (different response format)');
+          return true;
+        }
+      } else if (permissions === true || permissions === 1) {
+        console.log('✅ Notification permissions already granted (boolean/number response)');
+        return true;
+      } else {
+        console.log('⚠️ Notification permissions not granted');
+        return false;
+      }
     } catch (error) {
-      console.error('❌ Error requesting notification permissions:', error);
-      throw error;
+      console.error('❌ Error checking notification permissions:', error);
+      return false;
     }
   }
 
-    // Handle background messages
+  async requestPermissions() {
+    try {
+      console.log('📱 Requesting notification permissions...');
+      
+      // First check current permissions
+      const currentPermissions = await this.checkPermissions();
+      if (currentPermissions) {
+        console.log('✅ Permissions already granted, no need to request');
+        return true;
+      }
+      
+      // Request permissions with explicit settings using promise wrapper
+      const granted = await new Promise((resolve, reject) => {
+        PushNotification.requestPermissions({
+          alert: true,
+          badge: true,
+          sound: true,
+          critical: false,
+          provisional: false,
+        }, (permissions) => {
+          resolve(permissions);
+        });
+      });
+      
+      console.log('📱 Notification permissions result:', granted);
+      
+      // Handle different response formats
+      if (granted && typeof granted === 'object') {
+        // Check if it has the expected properties
+        if (granted.alert !== undefined && granted.badge !== undefined && granted.sound !== undefined) {
+          if (granted.alert && granted.badge && granted.sound) {
+            console.log('✅ All notification permissions granted');
+            return true;
+          } else {
+            console.log('⚠️ Some notification permissions not granted:', granted);
+            return false;
+          }
+        } else {
+          // If the response format is different, assume success if granted is truthy
+          console.log('✅ Notification permissions granted (different response format)');
+          return true;
+        }
+      } else if (granted === true || granted === 1) {
+        console.log('✅ Notification permissions granted (boolean/number response)');
+        return true;
+      } else {
+        console.log('⚠️ Notification permissions not granted');
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Error requesting notification permissions:', error);
+      // Return false instead of throwing to prevent app crashes
+      return false;
+    }
+  }
+
+  // Handle background messages
+  static setBackgroundMessageHandler() {
     messaging().setBackgroundMessageHandler(async remoteMessage => {
       console.log('Message handled in the background!', remoteMessage);
-      this.showNotification(remoteMessage);
+      // Handle background notification
     });
+  }
 
-    // Handle foreground messages
+  // Handle foreground messages
+  static setForegroundMessageHandler() {
     messaging().onMessage(async remoteMessage => {
       console.log('Message handled in the foreground!', remoteMessage);
       this.showNotification(remoteMessage);
@@ -137,68 +262,162 @@ class NotificationService {
 
   async scheduleEventNotifications(event) {
     try {
+      await this.ensureConfigured();
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      
-      // Get user preferences or use defaults (30 min and 15 min)
-      const reminder1Minutes = await AsyncStorage.getItem('reminder1Minutes');
-      const reminder2Minutes = await AsyncStorage.getItem('reminder2Minutes');
-      
-      const firstReminderMinutes = reminder1Minutes ? parseInt(reminder1Minutes) : 30;
-      const secondReminderMinutes = reminder2Minutes ? parseInt(reminder2Minutes) : 15;
-      
+
+      // Get the event's travel time (in minutes) - this is calculated from Google Maps when available
+      const travelTime = event.travelTime || 15; // Default to 15 minutes if not specified
+
+      // Get user preference for prep time (how early before leaving to get ready)
+      const prepTimeMinutes = await AsyncStorage.getItem('reminder1Minutes');
+      const prepTime = prepTimeMinutes ? parseInt(prepTimeMinutes) : 30; // Default 30 min prep time
+
       const eventTime = moment(event.startTime.toDate ? event.startTime.toDate() : event.startTime);
       const now = moment();
-      
-      console.log(`Scheduling notifications for event: ${event.title}`);
-      console.log(`Event time: ${eventTime.format('YYYY-MM-DD HH:mm')}`);
-      console.log(`First reminder: ${firstReminderMinutes} minutes before`);
-      console.log(`Second reminder: ${secondReminderMinutes} minutes before`);
-      
-      // Schedule first reminder (default 30 minutes before)
-      const firstReminderTime = eventTime.clone().subtract(firstReminderMinutes, 'minutes');
-      if (firstReminderTime.isAfter(now)) {
+
+      console.log(`\n📅 ========== SCHEDULING NOTIFICATIONS ==========`);
+      console.log(`📅 Event: ${event.title}`);
+      console.log(`📅 Event time: ${eventTime.format('YYYY-MM-DD HH:mm')}`);
+      console.log(`📅 Current time: ${now.format('YYYY-MM-DD HH:mm')}`);
+      console.log(`📅 Travel time: ${travelTime} minutes (${travelTime > 15 ? 'from Google Maps' : 'default'})`);
+      console.log(`📅 Prep time: ${prepTime} minutes`);
+
+      // Calculate departure time (event time - travel time)
+      // This is when the user should leave based on distance to destination
+      const departureTime = eventTime.clone().subtract(travelTime, 'minutes');
+      const minutesUntilDeparture = departureTime.diff(now, 'minutes');
+      console.log(`📅 Departure time (time to leave): ${departureTime.format('YYYY-MM-DD HH:mm')} (in ${minutesUntilDeparture} minutes)`);
+
+      // Calculate get ready time (departure time - prep time)
+      // This is when the user should start getting ready
+      const getReadyTime = departureTime.clone().subtract(prepTime, 'minutes');
+      const minutesUntilGetReady = getReadyTime.diff(now, 'minutes');
+      console.log(`📅 Get ready time: ${getReadyTime.format('YYYY-MM-DD HH:mm')} (in ${minutesUntilGetReady} minutes)`);
+
+      // Schedule "Get Ready" notification - fires at (departure time - prep time)
+      // e.g., if event is at 3:00 PM, travel time is 20 min, prep time is 30 min
+      // then departure time is 2:40 PM, and get ready time is 2:10 PM
+      //
+      // IMPORTANT: If get ready time is in the past but departure time is in the future,
+      // fire the notification immediately (3 seconds from now) instead of skipping it
+      const notificationId1 = this.hashStringToNumber(`${event.id}_get_ready`);
+      const timeUntilLeave = Math.round(departureTime.diff(now, 'minutes'));
+
+      if (departureTime.isAfter(now)) {
+        // Departure is still in the future
+        let notificationTime;
+
+        if (getReadyTime.isAfter(now)) {
+          // Get ready time is in the future - schedule normally
+          notificationTime = getReadyTime.toDate();
+          console.log(`✅ "Get Ready" notification scheduled for: ${getReadyTime.format('YYYY-MM-DD HH:mm')} (in ${minutesUntilGetReady} minutes) [ID: ${notificationId1}]`);
+        } else {
+          // Get ready time has passed but we still need to leave - fire immediately
+          notificationTime = moment().add(3, 'seconds').toDate();
+          console.log(`⚡ "Get Ready" time already passed (${Math.abs(minutesUntilGetReady)} minutes ago), firing IMMEDIATELY in 3 seconds [ID: ${notificationId1}]`);
+        }
+
         PushNotification.localNotificationSchedule({
-          id: `${event.id}_reminder1`,
+          id: notificationId1,
           channelId: 'reminders',
-          title: '📅 Upcoming Event',
-          message: `${event.title} starts in ${firstReminderMinutes} minutes. Get ready!`,
-          date: firstReminderTime.toDate(),
+          title: '📅 Get Ready!',
+          message: `Start getting ready for ${event.title}. You need to leave in ${timeUntilLeave} minutes (at ${departureTime.format('h:mm A')}).`,
+          date: notificationTime,
           allowWhileIdle: true,
           playSound: true,
           soundName: 'default',
           vibrate: true,
-          data: {
+          userInfo: {
             eventId: event.id,
-            type: 'reminder1',
+            type: 'get-ready',
+            eventTitle: event.title,
+            departureTime: departureTime.format('h:mm A'),
           },
         });
-        console.log(`✅ First reminder scheduled for: ${firstReminderTime.format('YYYY-MM-DD HH:mm')}`);
+      } else {
+        console.log(`⏭️ Skipping get ready notification (departure time has passed)`);
       }
 
-      // Schedule second reminder / time to leave (default 15 minutes before)
-      const secondReminderTime = eventTime.clone().subtract(secondReminderMinutes, 'minutes');
-      if (secondReminderTime.isAfter(now)) {
+      // Schedule "Time to Leave" notification - fires at departure time
+      // This is calculated based on travel distance when Google Maps integration is enabled
+      // e.g., if event is at 3:00 PM and travel time is 20 min, notification fires at 2:40 PM
+      //
+      // IMPORTANT: If departure time is within 5 minutes or has passed slightly,
+      // fire immediately instead of skipping
+      const notificationId2 = this.hashStringToNumber(`${event.id}_time_to_leave`);
+      // Reuse minutesUntilDeparture calculated earlier at line 274
+
+      if (eventTime.isAfter(now)) {
+        // Event hasn't started yet
+        let notificationTime;
+
+        if (minutesUntilDeparture > 0) {
+          // Departure time is in the future - schedule normally
+          notificationTime = departureTime.toDate();
+          console.log(`✅ "Time to Leave" notification scheduled for: ${departureTime.format('YYYY-MM-DD HH:mm')} (in ${minutesUntilDeparture} minutes) [ID: ${notificationId2}]`);
+        } else if (minutesUntilDeparture >= -5) {
+          // Departure time passed but within 5 minutes - fire immediately
+          notificationTime = moment().add(6, 'seconds').toDate(); // 6 seconds to fire after "get ready"
+          console.log(`⚡ Departure time passed (${Math.abs(minutesUntilDeparture)} min ago), firing IMMEDIATELY in 6 seconds [ID: ${notificationId2}]`);
+        } else {
+          console.log(`⏭️ Skipping "Time to Leave" notification (departure was ${Math.abs(minutesUntilDeparture)} minutes ago)`);
+          console.log(`📅 ===============================================\n`);
+          return; // Skip this notification
+        }
+
         PushNotification.localNotificationSchedule({
-          id: `${event.id}_reminder2`,
+          id: notificationId2,
           channelId: 'time-to-leave',
-          title: '⏰ Time to Leave!',
-          message: `Leave now for ${event.title}${event.location ? ` at ${event.location}` : ''}`,
-          date: secondReminderTime.toDate(),
+          title: '⏰ Time to Leave NOW!',
+          message: `Leave now for ${event.title}${event.location ? ` at ${event.location}` : ''}! ${travelTime > 15 ? `Travel time: ${travelTime} min (based on current traffic).` : `Travel time: ${travelTime} min.`}`,
+          date: notificationTime,
           allowWhileIdle: true,
           playSound: true,
           soundName: 'default',
           vibrate: true,
           vibration: 1000,
-          data: {
+          userInfo: {
             eventId: event.id,
             type: 'time-to-leave',
+            eventTitle: event.title,
+            location: event.location || '',
+            travelTime: travelTime,
           },
           actions: ['Leave Now', 'Snooze 5 min'],
         });
-        console.log(`✅ Second reminder scheduled for: ${secondReminderTime.format('YYYY-MM-DD HH:mm')}`);
+      } else {
+        console.log(`⏭️ Skipping "Time to Leave" notification (event already started)`);
       }
+      console.log(`📅 ===============================================\n`);
     } catch (error) {
-      console.error('Error scheduling event notifications:', error);
+      console.error('❌ Error scheduling event notifications:', error);
+      console.log(`📅 ===============================================\n`);
+    }
+  }
+
+  async saveNotificationToHistory(notification) {
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const existing = await AsyncStorage.getItem('userNotifications');
+      const notifications = existing ? JSON.parse(existing) : [];
+
+      // Check if notification already exists (by id)
+      const existingIndex = notifications.findIndex(n => n.id === notification.id);
+      if (existingIndex >= 0) {
+        // Update existing notification
+        notifications[existingIndex] = notification;
+      } else {
+        // Add new notification at the beginning
+        notifications.unshift(notification);
+      }
+
+      // Keep only last 50 notifications
+      const trimmed = notifications.slice(0, 50);
+
+      await AsyncStorage.setItem('userNotifications', JSON.stringify(trimmed));
+      console.log('✅ Notification saved to history:', notification.title);
+    } catch (error) {
+      console.error('Error saving notification to history:', error);
     }
   }
 
@@ -278,11 +497,22 @@ class NotificationService {
     });
   }
 
-  showArrivalNotification(event, wasOnTime, pointsAwarded = 50) {
+  async showArrivalNotification(event, wasOnTime, pointsAwarded = 50) {
     const title = wasOnTime ? '🎉 Great Job!' : '⚠️ Running Late';
-    const message = wasOnTime 
+    const message = wasOnTime
       ? `You arrived on time for "${event.title}"! +${pointsAwarded} XP earned!`
       : `You're running late for "${event.title}". Try to leave earlier next time.`;
+
+    // Save to notification history
+    await this.saveNotificationToHistory({
+      id: this.hashStringToNumber(`${event.id}_arrival`),
+      type: 'arrival',
+      title,
+      message,
+      eventId: event.id,
+      timestamp: new Date().toISOString(),
+      read: false,
+    });
 
     PushNotification.localNotification({
       channelId: 'achievements',
@@ -290,7 +520,7 @@ class NotificationService {
       message,
       playSound: true,
       vibrate: true,
-      data: {
+      userInfo: {
         type: 'arrival',
         eventId: event.id,
         wasOnTime,
@@ -328,7 +558,7 @@ class NotificationService {
     const tomorrow = moment().add(1, 'day').hour(8).minute(0).second(0).toDate();
 
     PushNotification.localNotificationSchedule({
-      id: 'daily_motivation',
+      id: this.hashStringToNumber('daily_motivation'),
       channelId: 'reminders',
       title: '💡 Daily Motivation',
       message: 'Start your day with punctuality!',
@@ -347,7 +577,7 @@ class NotificationService {
     const nextSunday = moment().day(7).hour(9).minute(0).second(0).toDate();
 
     PushNotification.localNotificationSchedule({
-      id: 'weekly_report',
+      id: this.hashStringToNumber('weekly_report'),
       channelId: 'achievements',
       title: '📊 Weekly Report',
       message: 'Check out your punctuality stats for this week!',

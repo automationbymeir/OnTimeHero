@@ -94,20 +94,24 @@ const PhoneLockScreen = ({ route, navigation }) => {
     }
   };
 
-  const handleArrived = () => {
+  const handleArrived = async () => {
     HapticFeedback.trigger('impactLight');
-    
+
     // Check if user arrived on time
     const eventTime = new Date(event.startTime.toDate());
     const now = new Date();
     const isOnTime = now <= eventTime; // Arrived before or at event time
-    
+
     console.log('🎯 Manual arrival confirmed');
     console.log('🎯 Event time:', eventTime);
     console.log('🎯 Current time:', now);
     console.log('🎯 Is on time:', isOnTime);
-    
-    LockService.unlock('Manual arrival confirmation');
+
+    // Wait for the unlock to complete and event to be updated
+    await LockService.unlockAsync('Manual arrival confirmation');
+
+    // Navigate immediately after update completes
+    handleUnlock('Manual arrival confirmation');
   };
 
   const handleEmergencyUnlock = async () => {
@@ -171,6 +175,13 @@ const PhoneLockScreen = ({ route, navigation }) => {
             <Text style={styles.eventLocation}>📍 {event.location}</Text>
           )}
         </View>
+
+        <TouchableOpacity
+          style={styles.leavingButton}
+          onPress={() => navigation.navigate('JourneyTracking', { event })}
+        >
+          <Text style={styles.leavingButtonText}>I'm Leaving Now 🚀</Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.arrivedButton}
@@ -294,6 +305,18 @@ const styles = StyleSheet.create({
   eventLocation: {
     fontSize: 14,
     color: 'rgba(255,255,255,0.9)',
+  },
+  leavingButton: {
+    backgroundColor: '#4facfe',
+    borderRadius: 25,
+    paddingVertical: 15,
+    paddingHorizontal: 40,
+    marginBottom: 15,
+  },
+  leavingButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   arrivedButton: {
     backgroundColor: '#4CAF50',

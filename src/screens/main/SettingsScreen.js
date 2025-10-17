@@ -9,6 +9,7 @@ import {
   ScrollView,
   Modal,
   TextInput,
+  Linking,
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -77,6 +78,16 @@ const SettingsScreen = ({ navigation }) => {
       const savedNotificationsEnabled = await AsyncStorage.getItem('notificationsEnabled');
       if (savedNotificationsEnabled) {
         setNotificationsEnabled(savedNotificationsEnabled === 'true');
+      } else {
+        // Check actual notification permissions on startup
+        try {
+          const NotificationService = require('../../services/NotificationService').default;
+          const hasPermissions = await NotificationService.checkPermissions();
+          setNotificationsEnabled(hasPermissions);
+          console.log('📱 Checked notification permissions on startup:', hasPermissions);
+        } catch (error) {
+          console.error('Error checking notification permissions:', error);
+        }
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -229,20 +240,51 @@ const SettingsScreen = ({ navigation }) => {
 
   const handleNotificationToggle = async (value) => {
     if (value) {
-      // Request notification permissions when enabling
       try {
-        const NotificationService = require('../../services/NotificationService').default;
-        await NotificationService.requestPermissions();
-        setNotificationsEnabled(true);
-        Alert.alert('Success', 'Notifications enabled! You will receive reminders for your events.');
+        console.log('🔔 Requesting notification permissions...');
+
+        // Always open system settings to let user enable permissions
+        Alert.alert(
+          'Enable Notifications',
+          'OnTimeHero needs notification permissions to send you event reminders. Tap "Open Settings" to enable notifications in your device settings.',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => setNotificationsEnabled(false) },
+            {
+              text: 'Open Settings',
+              onPress: async () => {
+                await Linking.openSettings();
+
+                // Check permissions after user returns
+                setTimeout(async () => {
+                  const NotificationService = require('../../services/NotificationService').default;
+                  const hasPermissions = await NotificationService.checkPermissions();
+                  setNotificationsEnabled(hasPermissions);
+                  if (hasPermissions) {
+                    await saveSettings();
+                    Alert.alert(
+                      '✅ Notifications Enabled!',
+                      'You will now receive event reminders based on your settings.',
+                      [{ text: 'Great!' }]
+                    );
+                  }
+                }, 1000);
+              }
+            }
+          ]
+        );
       } catch (error) {
-        console.error('Error enabling notifications:', error);
-        Alert.alert('Error', 'Failed to enable notifications. Please check your device settings.');
+        console.error('❌ Error opening settings:', error);
         setNotificationsEnabled(false);
       }
     } else {
       setNotificationsEnabled(false);
-      Alert.alert('Notifications Disabled', 'You will no longer receive event reminders.');
+      await saveSettings();
+      Alert.alert(
+        'Notifications Disabled',
+        'You will no longer receive event reminders. You can re-enable them anytime.',
+        [{ text: 'OK' }]
+      );
+      console.log('🔕 Notifications disabled');
     }
   };
 
@@ -273,10 +315,12 @@ const SettingsScreen = ({ navigation }) => {
           
           <View style={styles.settingItem}>
             <View style={styles.switchContainer}>
-              <Text style={styles.settingLabel}>Enable notifications</Text>
-              <Text style={styles.settingDescription}>
-                Allow the app to send you event reminders and arrival notifications
-              </Text>
+              <View style={styles.switchLabelContainer}>
+                <Text style={styles.settingLabel}>Enable notifications</Text>
+                <Text style={styles.settingDescription}>
+                  Allow the app to send you event reminders and arrival notifications
+                </Text>
+              </View>
               <Switch
                 value={notificationsEnabled}
                 onValueChange={handleNotificationToggle}
@@ -684,6 +728,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  switchLabelContainer: {
+    flex: 1,
+    marginRight: 15,
   },
   optionsContainer: {
     flexDirection: 'row',

@@ -43,16 +43,23 @@ class LocationService {
             accuracy: position.coords.accuracy,
             timestamp: position.timestamp,
           };
+          console.log('✅ Got current location:', this.currentLocation);
           resolve(this.currentLocation);
         },
         (error) => {
-          console.error('Location error:', error);
-          reject(error);
+          console.error('❌ Location error:', error);
+          // If we have a cached location, use it
+          if (this.currentLocation) {
+            console.log('⚠️ Using cached location due to error');
+            resolve(this.currentLocation);
+          } else {
+            reject(error);
+          }
         },
         {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 10000,
+          enableHighAccuracy: false, // Use false for faster response
+          timeout: 30000, // Increased to 30 seconds
+          maximumAge: 300000, // Accept locations up to 5 minutes old
         }
       );
     });
@@ -234,7 +241,7 @@ class LocationService {
     const eventTime = moment(event.startTime.toDate());
     const travelTime = await this.estimateTravelTime(event.location);
     const bufferTime = 5; // 5 minutes buffer
-    const departureTime = eventTime.subtract(travelTime + bufferTime, 'minutes');
+    const departureTime = eventTime.clone().subtract(travelTime + bufferTime, 'minutes');
     
     return {
       departureTime: departureTime.toDate(),

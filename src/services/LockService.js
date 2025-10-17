@@ -152,10 +152,10 @@ class LockService {
 
   unlock(reason) {
     this.isLocked = false;
-    
+
     // Clear lock state
     AsyncStorage.removeItem('lockMode');
-    
+
     // Stop location tracking
     if (this.locationWatchId) {
       Geolocation.clearWatch(this.locationWatchId);
@@ -182,13 +182,52 @@ class LockService {
       const eventTime = new Date(this.currentEvent.startTime.toDate ? this.currentEvent.startTime.toDate() : this.currentEvent.startTime);
       const now = new Date();
       const isOnTime = now <= eventTime; // Arrived before or at event time
-      
+
       console.log('🎯 Unlock reason:', reason);
       console.log('🎯 Event time:', eventTime);
       console.log('🎯 Current time:', now);
       console.log('🎯 Is on time:', isOnTime);
-      
+
       this.updateEventCompletion(isOnTime);
+    }
+  }
+
+  async unlockAsync(reason) {
+    this.isLocked = false;
+
+    // Clear lock state
+    await AsyncStorage.removeItem('lockMode');
+
+    // Stop location tracking
+    if (this.locationWatchId) {
+      Geolocation.clearWatch(this.locationWatchId);
+    }
+
+    // Remove app state listener
+    if (this.appStateSubscription) {
+      this.appStateSubscription.remove();
+    }
+
+    // Clear timers
+    if (this.lockTimer) {
+      clearTimeout(this.lockTimer);
+    }
+
+    // Update event status and WAIT for it to complete
+    if (this.currentEvent) {
+      // Check if arrived on time
+      const eventTime = new Date(this.currentEvent.startTime.toDate ? this.currentEvent.startTime.toDate() : this.currentEvent.startTime);
+      const now = new Date();
+      const isOnTime = now <= eventTime; // Arrived before or at event time
+
+      console.log('🎯 Async unlock - Unlock reason:', reason);
+      console.log('🎯 Event time:', eventTime);
+      console.log('🎯 Current time:', now);
+      console.log('🎯 Is on time:', isOnTime);
+
+      // Wait for event update to complete
+      await this.updateEventCompletion(isOnTime);
+      console.log('✅ Event completion update finished');
     }
   }
 
@@ -204,28 +243,92 @@ class LockService {
       const GamificationService = require('./GamificationService').default;
       const NotificationService = require('./NotificationService').default;
 
+      const completedAt = new Date();
+      const eventTime = new Date(this.currentEvent.startTime.toDate ? this.currentEvent.startTime.toDate() : this.currentEvent.startTime);
+
+      // Check if arrived 10+ minutes early for Early Bird badge
+      const minutesEarly = (eventTime - completedAt) / (1000 * 60);
+      const wasEarly = minutesEarly >= 10;
+
+      console.log('🎯 Minutes before event:', minutesEarly);
+      console.log('🎯 Was early (10+ min):', wasEarly);
+
       // Update event status in Firestore
       if (!this.currentEvent.isLocal) {
         await firestore().collection('events').doc(this.currentEvent.id).update({
           status: 'completed',
-          completedAt: firestore.FieldValue.serverTimestamp(),
+          completedAt: firestore.Timestamp.fromDate(completedAt),
           arrivedOnTime: arrivedOnTime,
+          wasEarly: wasEarly,
         });
-        console.log('✅ Event status updated in Firestore');
+        console.log('✅ Event status updated in Firestore:', {
+          id: this.currentEvent.id,
+          status: 'completed',
+          completedAt: completedAt.toISOString(),
+          arrivedOnTime,
+          wasEarly,
+        });
+      } else {
+        // For local events, also update in Firestore if possible
+        try {
+          const auth = require('@react-native-firebase/auth').default;
+          const currentUser = auth().currentUser;
+
+          // Try to create the event in Firestore if it doesn't exist yet
+          const eventTime = new Date(this.currentEvent.startTime.toDate ? this.currentEvent.startTime.toDate() : this.currentEvent.startTime);
+          const minutesEarly = (eventTime - completedAt) / (1000 * 60);
+          const wasEarly = minutesEarly >= 10;
+
+          const eventData = {
+            userId: currentUser.uid,
+            title: this.currentEvent.title,
+            description: this.currentEvent.description || '',
+            location: this.currentEvent.location || '',
+            startTime: firestore.Timestamp.fromDate(new Date(this.currentEvent.startTime)),
+            endTime: firestore.Timestamp.fromDate(new Date(this.currentEvent.endTime)),
+            travelTime: this.currentEvent.travelTime || 15,
+            status: 'completed',
+            completedAt: firestore.Timestamp.fromDate(completedAt),
+            arrivedOnTime: arrivedOnTime,
+            wasEarly: wasEarly,
+            createdAt: firestore.Timestamp.now(),
+          };
+
+          await firestore().collection('events').add(eventData);
+          console.log('✅ Local event synced to Firestore as completed');
+        } catch (firestoreError) {
+          console.log('⚠️ Could not sync local event to Firestore:', firestoreError.message);
+        }
       }
 
       // Update local events
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       const localEventsData = await AsyncStorage.getItem('localEvents');
       if (localEventsData) {
+        const eventTime = new Date(this.currentEvent.startTime.toDate ? this.currentEvent.startTime.toDate() : this.currentEvent.startTime);
+        const minutesEarly = (eventTime - completedAt) / (1000 * 60);
+        const wasEarly = minutesEarly >= 10;
+
         const events = JSON.parse(localEventsData);
-        const updatedEvents = events.map(event => 
-          event.id === this.currentEvent.id 
-            ? { ...event, status: 'completed', completedAt: new Date().toISOString(), arrivedOnTime }
+        const updatedEvents = events.map(event =>
+          event.id === this.currentEvent.id
+            ? {
+                ...event,
+                status: 'completed',
+                completedAt: completedAt.toISOString(),
+                arrivedOnTime: arrivedOnTime,
+                wasEarly: wasEarly
+              }
             : event
         );
         await AsyncStorage.setItem('localEvents', JSON.stringify(updatedEvents));
-        console.log('✅ Local event status updated');
+        console.log('✅ Local event status updated:', {
+          id: this.currentEvent.id,
+          status: 'completed',
+          completedAt: completedAt.toISOString(),
+          arrivedOnTime,
+          wasEarly,
+        });
       }
 
       // Award points and achievements

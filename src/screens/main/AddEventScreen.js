@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,32 +20,48 @@ import NotificationService from '../../services/NotificationService';
 import GoogleMapsService from '../../services/GoogleMapsService';
 // import DatePicker from 'react-native-date-picker'; // Temporarily disabled due to linking issues
 
-const AddEventScreen = ({ navigation }) => {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [location, setLocation] = useState('');
-  const [date, setDate] = useState(moment().format('YYYY-MM-DD'));
-  const [time, setTime] = useState(moment().format('HH:mm'));
+const AddEventScreen = ({ navigation, route }) => {
+  const prefill = route?.params?.prefill || {};
+  const [title, setTitle] = useState(prefill.title || '');
+  const [description, setDescription] = useState(prefill.description || '');
+  const [location, setLocation] = useState(prefill.location || '');
+  const [fromUseCurrent, setFromUseCurrent] = useState(prefill.origin ? false : true);
+  const [fromText, setFromText] = useState(prefill.origin || '');
+  const [fromPredictions, setFromPredictions] = useState([]);
+  const [showFromPredictions, setShowFromPredictions] = useState(false);
+  const [date, setDate] = useState(prefill.date || moment().format('YYYY-MM-DD'));
+  const [time, setTime] = useState(prefill.time || moment().format('HH:mm'));
   const [loading, setLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedTime, setSelectedTime] = useState(new Date());
+  const [selectedHour, setSelectedHour] = useState(parseInt(moment().format('HH'), 10));
+  const [selectedMinute, setSelectedMinute] = useState(parseInt(moment().format('mm'), 10));
+  const hourListRef = useRef(null);
+  const minuteListRef = useRef(null);
   const [locationPredictions, setLocationPredictions] = useState([]);
   const [showLocationPredictions, setShowLocationPredictions] = useState(false);
   const [calculatedTravelTime, setCalculatedTravelTime] = useState(null);
 
   const handleSaveEvent = async () => {
+    console.log('🚀 Starting event save process...');
+    console.log('📋 Form data:', { title, date, time, location, description });
+    
     if (!title || !date || !time) {
+      console.log('❌ Missing required fields');
       Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
 
+    console.log('✅ Required fields present, setting loading...');
     setLoading(true);
-    
+
     try {
       const currentUser = auth().currentUser;
+      console.log('👤 Current user:', currentUser ? 'authenticated' : 'not authenticated');
       if (!currentUser) {
+        console.log('❌ User not authenticated');
         Alert.alert('Error', 'User not authenticated');
         setLoading(false);
         return;
@@ -57,12 +73,12 @@ const AddEventScreen = ({ navigation }) => {
         // Try different time formats
         const timeFormats = ['HH:mm', 'h:mm A', 'h:mm a', 'HH:mm:ss', 'h:mm:ss A', 'h:mm:ss a'];
         parsedTime = moment(time, timeFormats, true);
-        
+
         if (!parsedTime.isValid()) {
           // If none of the formats work, try parsing as-is
           parsedTime = moment(time);
         }
-        
+
         if (!parsedTime.isValid()) {
           Alert.alert('Invalid Time', 'Please enter time in format like "2:30 PM" or "14:30"');
           setLoading(false);
@@ -73,12 +89,72 @@ const AddEventScreen = ({ navigation }) => {
         setLoading(false);
         return;
       }
-      
+
       // Create event datetime in local timezone
       const eventDateTime = moment(`${date} ${parsedTime.format('HH:mm')}`, 'YYYY-MM-DD HH:mm').toDate();
-      
+
+      // Determine origin for travel calculation
+      let originForCalc = null;
+      if (fromUseCurrent) {
+        // null -> service uses current location
+        originForCalc = null;
+      } else if (fromText && fromText.trim() !== '') {
+        originForCalc = fromText.trim();
+      }
+
+      // Calculate travel time if not already calculated and location is provided
+      let travelTime = calculatedTravelTime;
+      try {
+        if (!travelTime && location && location.trim() !== '') {
+          // Skip travel time calculation for very short or generic locations
+          if (location.trim().length < 3) {
+            console.log('⚠️ Location too short for travel calculation, using default');
+            travelTime = 15;
+          } else {
+            console.log('📍 Calculating travel time for location:', location);
+            try {
+              let travelInfo;
+              if (originForCalc) {
+                travelInfo = await GoogleMapsService.calculateTravelTime(
+                  originForCalc,
+                  location,
+                  eventDateTime
+                );
+              } else {
+                travelInfo = await GoogleMapsService.calculateTravelTimeFromCurrentLocation(
+                  location,
+                  eventDateTime
+                );
+              }
+
+              if (travelInfo && !travelInfo.error) {
+                travelTime = travelInfo.duration;
+                console.log('✅ Travel time calculated:', travelTime, 'minutes');
+              } else {
+                console.log('⚠️ Could not calculate travel time:', travelInfo?.error || 'Unknown error');
+                travelTime = 15; // Default
+              }
+            } catch (error) {
+              console.warn('⚠️ Error calculating travel time:', error.message || error);
+              travelTime = 15; // Default
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Error in travel time calculation section:', error.message || error);
+        travelTime = 15; // Default
+      }
+
       // Use calculated travel time or default to 15 minutes
-      const travelTime = calculatedTravelTime || 15;
+      travelTime = travelTime || 15;
+      
+      console.log('📝 Creating event with data:', {
+        title,
+        date,
+        time,
+        location,
+        travelTime
+      });
       
       // Always save locally first for immediate feedback
       const localEventData = {
@@ -87,25 +163,67 @@ const AddEventScreen = ({ navigation }) => {
         title,
         description,
         location,
+        origin: fromUseCurrent ? 'CURRENT_LOCATION' : fromText,
         startTime: eventDateTime.toISOString(),
         endTime: moment(eventDateTime).add(1, 'hour').toISOString(),
         travelTime: travelTime,
         status: 'upcoming',
         createdAt: new Date().toISOString(),
+        lastModified: new Date().toISOString(),
         isLocal: true,
       };
       
       // Save to local storage
+      console.log('💾 Saving to local storage...');
       const existingEvents = await AsyncStorage.getItem('localEvents');
       const events = existingEvents ? JSON.parse(existingEvents) : [];
-      events.push(localEventData);
-      await AsyncStorage.setItem('localEvents', JSON.stringify(events));
+      console.log('📊 Existing events count:', events.length);
+      
+      // Remove existing duplicates first
+      const uniqueEvents = events.filter(existingEvent => {
+        const sameTitle = existingEvent.title === localEventData.title;
+        const sameTime = existingEvent.startTime === localEventData.startTime;
+        const sameLocation = existingEvent.location === localEventData.location;
+        return !(sameTitle && sameTime && sameLocation);
+      });
+      
+      console.log('🧹 Removed', events.length - uniqueEvents.length, 'duplicate events');
+      
+      // Check if this exact event already exists
+      const isDuplicate = uniqueEvents.some(existingEvent => {
+        const sameTitle = existingEvent.title === localEventData.title;
+        const sameTime = existingEvent.startTime === localEventData.startTime;
+        const sameLocation = existingEvent.location === localEventData.location;
+        return sameTitle && sameTime && sameLocation;
+      });
+      
+      if (isDuplicate) {
+        console.log('⚠️ Duplicate event detected, not saving');
+        Alert.alert('Duplicate Event', 'This event already exists. Please check your calendar.');
+        setLoading(false);
+        return;
+      }
+      
+      // Use the cleaned events array
+      const eventsToSave = [...uniqueEvents, localEventData];
+      
+      await AsyncStorage.setItem('localEvents', JSON.stringify(eventsToSave));
+      console.log('✅ Event saved to local storage successfully');
       
       // Schedule notifications for the event
       await NotificationService.scheduleEventNotifications(localEventData);
       console.log('✅ Notifications scheduled for event');
       
+      console.log('✅ Event saved successfully to local storage');
+      
+      // Verify the event was actually saved
+      const verifyEvents = await AsyncStorage.getItem('localEvents');
+      const verifyParsed = verifyEvents ? JSON.parse(verifyEvents) : [];
+      console.log('🔍 Verification: Total events in storage:', verifyParsed.length);
+      console.log('🔍 Verification: Last event saved:', verifyParsed[verifyParsed.length - 1]);
+      
       // Show success immediately
+      console.log('🎉 Showing success alert...');
       Alert.alert('Success', 'Event created successfully!', [
         { 
           text: 'OK', 
@@ -126,14 +244,10 @@ const AddEventScreen = ({ navigation }) => {
         console.log('Background sync failed, will retry later:', err);
       });
       
-      // Also try to create in Google Calendar immediately
-      createGoogleCalendarEvent(localEventData).catch(err => {
-        console.log('Google Calendar sync failed:', err);
-      });
-      
     } catch (error) {
-      console.error('Error creating event:', error);
-      Alert.alert('Error', 'Failed to save event. Please try again.');
+      console.error('❌ Error creating event:', error);
+      console.error('❌ Error stack:', error.stack);
+      Alert.alert('Error', `Failed to save event: ${error.message || 'Unknown error'}. Please try again.`);
     } finally {
       setLoading(false);
     }
@@ -144,37 +258,61 @@ const AddEventScreen = ({ navigation }) => {
       const currentUser = auth().currentUser;
       if (!currentUser) return;
 
+      // Check if event already exists in Firestore to avoid duplicates
+      const eventTime = moment(eventData.startTime).format('YYYY-MM-DD HH:mm');
+      const duplicateCheck = await firestore()
+        .collection('events')
+        .where('userId', '==', currentUser.uid)
+        .where('title', '==', eventData.title)
+        .where('startTime', '==', firestore.Timestamp.fromDate(new Date(eventData.startTime)))
+        .get();
+
+      if (!duplicateCheck.empty) {
+        console.log('✅ Event already exists in Firestore, skipping sync');
+        // Remove from local storage since it's already in Firestore
+        const localEvents = await AsyncStorage.getItem('localEvents');
+        if (localEvents) {
+          const events = JSON.parse(localEvents);
+          const filteredEvents = events.filter(e => e.id !== eventData.id);
+          await AsyncStorage.setItem('localEvents', JSON.stringify(filteredEvents));
+        }
+        return;
+      }
+
       const firestoreEventData = {
         userId: currentUser.uid,
         title: eventData.title,
         description: eventData.description,
         location: eventData.location,
+        origin: eventData.origin || null,
         startTime: firestore.Timestamp.fromDate(new Date(eventData.startTime)),
         endTime: firestore.Timestamp.fromDate(new Date(eventData.endTime)),
         travelTime: eventData.travelTime,
         status: eventData.status,
         createdAt: firestore.Timestamp.now(),
         lastSynced: firestore.Timestamp.now(),
+        lastModified: firestore.Timestamp.fromDate(new Date(eventData.lastModified || eventData.createdAt)),
       };
 
-      await firestore().collection('events').add(firestoreEventData);
-      console.log('Event synced to Firestore successfully');
-      
+      const docRef = await firestore().collection('events').add(firestoreEventData);
+      console.log('✅ Event synced to Firestore successfully, ID:', docRef.id);
+
       // Also try to create in Google Calendar (don't wait for it)
       createGoogleCalendarEvent(eventData).catch(err => {
         console.log('Google Calendar sync failed, will retry later:', err);
       });
-      
+
       // Remove from local storage after successful sync
-      const existingEvents = await AsyncStorage.getItem('localEvents');
-      if (existingEvents) {
-        const events = JSON.parse(existingEvents);
+      const existingLocalEvents = await AsyncStorage.getItem('localEvents');
+      if (existingLocalEvents) {
+        const events = JSON.parse(existingLocalEvents);
         const filteredEvents = events.filter(e => e.id !== eventData.id);
         await AsyncStorage.setItem('localEvents', JSON.stringify(filteredEvents));
+        console.log('✅ Removed event from local storage after Firestore sync');
       }
-      
+
     } catch (error) {
-      console.log('Firestore sync failed:', error);
+      console.log('❌ Firestore sync failed:', error);
       // Keep in local storage for retry later
     }
   };
@@ -203,8 +341,9 @@ const AddEventScreen = ({ navigation }) => {
         }
       }
 
-      // Get access token
-      const tokens = await GoogleSignin.getTokens();
+      // Get access token safely
+      const calendarService = require('../../services/GoogleCalendarService').default;
+      const tokens = await calendarService.getTokensSafely();
       const accessToken = tokens.accessToken;
       console.log('Google access token available:', !!accessToken);
 
@@ -288,8 +427,21 @@ const AddEventScreen = ({ navigation }) => {
   };
 
   const handleTimePress = () => {
-    setSelectedTime(moment(time, 'HH:mm').toDate());
+    const m = moment(time, 'HH:mm');
+    const h = parseInt(m.format('HH'), 10);
+    const mm = parseInt(m.format('mm'), 10);
+    setSelectedHour(isNaN(h) ? parseInt(moment().format('HH'), 10) : h);
+    setSelectedMinute(isNaN(mm) ? parseInt(moment().format('mm'), 10) : mm);
+    setSelectedTime(m.toDate());
     setShowTimePicker(true);
+    setTimeout(() => {
+      if (hourListRef.current) {
+        hourListRef.current.scrollTo({ y: (isNaN(h) ? 0 : h) * 40, animated: false });
+      }
+      if (minuteListRef.current) {
+        minuteListRef.current.scrollTo({ y: (isNaN(mm) ? 0 : mm) * 40, animated: false });
+      }
+    }, 0);
   };
 
   const handleLocationChange = async (text) => {
@@ -304,6 +456,23 @@ const AddEventScreen = ({ navigation }) => {
       setLocationPredictions([]);
       setShowLocationPredictions(false);
     }
+  };
+
+  const handleFromChange = async (text) => {
+    setFromText(text);
+    if (text.length > 2) {
+      const predictions = await GoogleMapsService.getPlacePredictions(text);
+      setFromPredictions(predictions);
+      setShowFromPredictions(predictions.length > 0);
+    } else {
+      setFromPredictions([]);
+      setShowFromPredictions(false);
+    }
+  };
+
+  const handleSelectFrom = async (prediction) => {
+    setFromText(prediction.description);
+    setShowFromPredictions(false);
   };
 
   const handleSelectLocation = async (prediction) => {
@@ -372,13 +541,52 @@ const AddEventScreen = ({ navigation }) => {
             />
           </View>
 
+          {/* Route Builder */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>From</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+              <TouchableOpacity onPress={() => setFromUseCurrent(true)} style={[styles.toggleChip, fromUseCurrent && styles.toggleChipActive]}>
+                <Icon name="my-location" size={16} color="#fff" />
+                <Text style={styles.toggleChipText}>Current location</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setFromUseCurrent(false)} style={[styles.toggleChip, !fromUseCurrent && styles.toggleChipActive]}>
+                <Icon name="edit-location" size={16} color="#fff" />
+                <Text style={styles.toggleChipText}>Choose address</Text>
+              </TouchableOpacity>
+            </View>
+            {!fromUseCurrent && (
+              <>
+                <TextInput
+                  style={styles.input}
+                  value={fromText}
+                  onChangeText={handleFromChange}
+                  placeholder="Search origin address"
+                  placeholderTextColor="rgba(255,255,255,0.6)"
+                />
+                {showFromPredictions && fromPredictions.length > 0 && (
+                  <View style={styles.predictionsContainer}>
+                    {fromPredictions.map(prediction => (
+                      <TouchableOpacity key={prediction.placeId} style={styles.predictionItem} onPress={() => handleSelectFrom(prediction)}>
+                        <Icon name="location-on" size={20} color="rgba(255,255,255,0.8)" />
+                        <View style={styles.predictionTextContainer}>
+                          <Text style={styles.predictionMainText}>{prediction.mainText}</Text>
+                          <Text style={styles.predictionSecondaryText}>{prediction.secondaryText}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </>
+            )}
+          </View>
+
                <View style={styles.inputGroup}>
-                 <Text style={styles.label}>Location</Text>
+                 <Text style={styles.label}>To</Text>
                  <TextInput
                    style={styles.input}
                    value={location}
                    onChangeText={handleLocationChange}
-                   placeholder="Enter event location"
+                   placeholder="Enter destination"
                    placeholderTextColor="rgba(255,255,255,0.6)"
                  />
                  {showLocationPredictions && locationPredictions.length > 0 && (
@@ -424,21 +632,11 @@ const AddEventScreen = ({ navigation }) => {
                  <View style={[styles.inputGroup, styles.halfWidth]}>
                    <Text style={styles.label}>Time *</Text>
                    <View style={styles.timeInputContainer}>
-                     <TextInput
-                       style={[styles.input, styles.timeInput]}
-                       value={time}
-                       onChangeText={setTime}
-                       placeholder="2:30 PM or 14:30"
-                       placeholderTextColor="rgba(255,255,255,0.6)"
-                       keyboardType="default"
-                     />
-                     <TouchableOpacity style={styles.timePickerButton} onPress={handleTimePress}>
+                     <TouchableOpacity style={[styles.input, styles.clickableInput]} onPress={handleTimePress}>
+                       <Text style={styles.inputText}>{moment(time, 'HH:mm').format('h:mm A')}</Text>
                        <Icon name="access-time" size={20} color="rgba(255,255,255,0.6)" />
                      </TouchableOpacity>
                    </View>
-                   <Text style={styles.timeFormatHint}>
-                     Type time like "2:30 PM" or "14:30", or tap clock to pick
-                   </Text>
                  </View>
           </View>
 
@@ -503,7 +701,7 @@ const AddEventScreen = ({ navigation }) => {
         </View>
       </Modal>
 
-      {/* Custom Time Picker Modal */}
+      {/* Custom Time Picker Modal (Wheel style) */}
       <Modal
         visible={showTimePicker}
         transparent={true}
@@ -513,32 +711,66 @@ const AddEventScreen = ({ navigation }) => {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Select Time</Text>
-            <View style={styles.timeOptions}>
-              {Array.from({ length: 24 }, (_, hour) => {
-                const timeString = `${hour.toString().padStart(2, '0')}:00`;
-                const isSelected = time === timeString;
-                return (
-                  <TouchableOpacity
-                    key={hour}
-                    style={[styles.timeOption, isSelected && styles.selectedTimeOption]}
-                    onPress={() => {
-                      setTime(timeString);
-                      setShowTimePicker(false);
-                    }}
-                  >
-                    <Text style={[styles.timeOptionText, isSelected && styles.selectedTimeOptionText]}>
-                      {moment(timeString, 'HH:mm').format('h:mm A')}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+            <View style={styles.wheelContainer}>
+              <View style={styles.wheelColumn}>
+                <ScrollView
+                  ref={hourListRef}
+                  showsVerticalScrollIndicator={false}
+                  snapToInterval={40}
+                  decelerationRate="fast"
+                  onMomentumScrollEnd={(e) => {
+                    const idx = Math.round(e.nativeEvent.contentOffset.y / 40);
+                    const clamped = Math.max(0, Math.min(23, idx));
+                    setSelectedHour(clamped);
+                  }}
+                >
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <View key={`h-${h}`} style={styles.wheelItem}>
+                      <Text style={[styles.wheelItemText, h === selectedHour && styles.wheelItemTextActive]}>{h.toString().padStart(2, '0')}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
+              <Text style={styles.wheelSeparator}>:</Text>
+              <View style={styles.wheelColumn}>
+                <ScrollView
+                  ref={minuteListRef}
+                  showsVerticalScrollIndicator={false}
+                  snapToInterval={40}
+                  decelerationRate="fast"
+                  onMomentumScrollEnd={(e) => {
+                    const idx = Math.round(e.nativeEvent.contentOffset.y / 40);
+                    const clamped = Math.max(0, Math.min(59, idx));
+                    setSelectedMinute(clamped);
+                  }}
+                >
+                  {Array.from({ length: 60 }, (_, mIdx) => (
+                    <View key={`m-${mIdx}`} style={styles.wheelItem}>
+                      <Text style={[styles.wheelItemText, mIdx === selectedMinute && styles.wheelItemTextActive]}>{mIdx.toString().padStart(2, '0')}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
             </View>
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={() => setShowTimePicker(false)}
-            >
-              <Text style={styles.modalCloseButtonText}>Cancel</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <TouchableOpacity
+                style={[styles.modalCloseButton, { backgroundColor: '#f0f0f0' }]}
+                onPress={() => setShowTimePicker(false)}
+              >
+                <Text style={[styles.modalCloseButtonText, { color: '#333' }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => {
+                  const hh = selectedHour.toString().padStart(2, '0');
+                  const mm = selectedMinute.toString().padStart(2, '0');
+                  setTime(`${hh}:${mm}`);
+                  setShowTimePicker(false);
+                }}
+              >
+                <Text style={styles.modalCloseButtonText}>Set Time</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -579,6 +811,26 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
     marginBottom: 8,
+  },
+  toggleChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)'
+  },
+  toggleChipActive: {
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderColor: '#fff'
+  },
+  toggleChipText: {
+    color: '#fff',
+    marginLeft: 6,
+    fontWeight: '600'
   },
   input: {
     backgroundColor: 'rgba(255,255,255,0.2)',
@@ -738,12 +990,47 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 2,
   },
+  timeOptionsScrollView: {
+    maxHeight: 400,
+    marginBottom: 20,
+  },
+  wheelContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  wheelColumn: {
+    height: 200,
+    width: 80,
+    backgroundColor: '#f7f7f7',
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginHorizontal: 6,
+  },
+  wheelItem: {
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  wheelItemText: {
+    fontSize: 18,
+    color: '#666',
+  },
+  wheelItemTextActive: {
+    color: '#333',
+    fontWeight: 'bold',
+  },
+  wheelSeparator: {
+    fontSize: 24,
+    color: '#333',
+    marginHorizontal: 4,
+  },
   timeOptions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: 20,
-    maxHeight: 300,
+    paddingBottom: 20,
   },
   timeOption: {
     backgroundColor: '#f0f0f0',

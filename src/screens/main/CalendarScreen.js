@@ -11,14 +11,17 @@ import {
   AppState,
   Modal,
 } from 'react-native';
+import { DeviceEventEmitter } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import firestore from '@react-native-firebase/firestore';
 import auth from '@react-native-firebase/auth';
 import moment from 'moment-timezone';
 import GoogleCalendarService from '../../services/GoogleCalendarService';
+import GoogleMapsService from '../../services/GoogleMapsService';
 import LockService from '../../services/LockService';
 import NotificationService from '../../services/NotificationService';
+import LocationService from '../../services/LocationService';
 
 const { width } = Dimensions.get('window');
 
@@ -30,12 +33,113 @@ const CalendarScreen = ({ navigation }) => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [eventToDelete, setEventToDelete] = useState(null);
+  const [currentAddress, setCurrentAddress] = useState('Your Location');
+  const [calculatedTravelTimes, setCalculatedTravelTimes] = useState({});
   const refreshIntervalRef = useRef(null);
   const appState = useRef(AppState.currentState);
 
+  // Fetch current location and reverse geocode to address
+  useEffect(() => {
+    const fetchLocation = async () => {
+      try {
+        const hasPermission = await LocationService.requestLocationPermission();
+        if (hasPermission) {
+          const location = await LocationService.getCurrentLocation();
+
+          if (location) {
+            try {
+              const response = await fetch(
+                `https://maps.googleapis.com/maps/api/geocode/json?latlng=${location.latitude},${location.longitude}&key=AIzaSyCjpfpg6D4w8nnW10Xkoz8DoWGS-0b6v6Q`
+              );
+              const data = await response.json();
+              if (data.results && data.results[0]) {
+                const address = data.results[0].formatted_address;
+                const parts = address.split(',');
+                const shortAddress = parts[0] + (parts[1] ? ', ' + parts[1].trim() : '');
+                setCurrentAddress(shortAddress.length > 30 ? shortAddress.substring(0, 30) + '...' : shortAddress);
+              }
+            } catch (geocodeError) {
+              console.log('Could not reverse geocode:', geocodeError);
+            }
+          }
+        }
+      } catch (error) {
+        console.log('Could not get current location:', error);
+      }
+    };
+
+    fetchLocation();
+    // Update location every 30 seconds
+    const locationInterval = setInterval(fetchLocation, 30000);
+
+    return () => clearInterval(locationInterval);
+  }, []);
+
+  // Calculate travel times for events with locations
+  useEffect(() => {
+    const calculateTravelTimes = async () => {
+      if (events.length === 0) return;
+
+      const travelTimesMap = {};
+
+      for (const event of events) {
+        // Skip completed events and events without location
+        if (!event.location || event.status === 'completed') {
+          continue;
+        }
+
+        // Skip events with invalid or empty location
+        if (!event.location.trim() || event.location.length < 3) {
+          console.log('⚠️ Skipping travel time calculation for event with invalid location:', event.title);
+          continue;
+        }
+
+        try {
+          const eventTime = event.startTime.toDate ? event.startTime.toDate() : event.startTime;
+
+          // Skip past events (more than 1 hour ago)
+          const eventMoment = moment(eventTime);
+          if (eventMoment.isBefore(moment().subtract(1, 'hour'))) {
+            console.log('⚠️ Skipping travel time calculation for past event:', event.title);
+            continue;
+          }
+
+          let travelInfo;
+          if (event.origin && event.origin !== 'CURRENT_LOCATION') {
+            travelInfo = await GoogleMapsService.calculateTravelTime(
+              event.origin,
+              event.location,
+              eventTime
+            );
+          } else {
+            travelInfo = await GoogleMapsService.calculateTravelTimeFromCurrentLocation(
+              event.location,
+              eventTime
+            );
+          }
+
+          if (travelInfo && travelInfo.duration) {
+            travelTimesMap[event.id] = travelInfo.duration;
+            console.log('🚗 Calculated travel time for', event.title, ':', travelInfo.duration, 'min');
+          }
+        } catch (error) {
+          console.log('Could not calculate travel time for', event.title, ':', error);
+        }
+      }
+
+      setCalculatedTravelTimes(travelTimesMap);
+    };
+
+    calculateTravelTimes();
+    // Recalculate travel times every 5 minutes
+    const travelTimeInterval = setInterval(calculateTravelTimes, 300000);
+
+    return () => clearInterval(travelTimeInterval);
+  }, [events]);
+
   useEffect(() => {
     initializeCalendar();
-    
+
     // Set up automatic refresh every 30 seconds
     refreshIntervalRef.current = setInterval(() => {
       console.log('Auto-refreshing calendar...');
@@ -59,14 +163,28 @@ const CalendarScreen = ({ navigation }) => {
       loadEvents();
     });
 
+    // Listen to route updates to refresh in-memory event and recalc times
+    const sub = DeviceEventEmitter.addListener('EVENT_ROUTE_UPDATED', (updatedEvent) => {
+      setEvents(prev => prev.map(e => (e.id === updatedEvent.id ? { ...e, origin: updatedEvent.origin, location: updatedEvent.location } : e)));
+      setTodayEvents(prev => prev.map(e => (e.id === updatedEvent.id ? { ...e, origin: updatedEvent.origin, location: updatedEvent.location } : e)));
+      setNextEvent(prev => prev && prev.id === updatedEvent.id ? { ...prev, origin: updatedEvent.origin, location: updatedEvent.location } : prev);
+    });
+
     return () => {
       if (refreshIntervalRef.current) {
         clearInterval(refreshIntervalRef.current);
       }
       subscription?.remove();
       unsubscribeFocus();
+      sub.remove();
     };
   }, []);
+
+  // Debug events state changes
+  useEffect(() => {
+    console.log('📅 Events state changed:', events.length, 'events');
+    events.forEach(event => console.log('  - State event:', event.title));
+  }, [events]);
 
   const initializeCalendar = async () => {
     await loadEvents();
@@ -98,79 +216,138 @@ const CalendarScreen = ({ navigation }) => {
         const localEventsData = await AsyncStorage.getItem('localEvents');
         if (localEventsData) {
           const parsedLocalEvents = JSON.parse(localEventsData);
-          localEvents = parsedLocalEvents.map(event => ({
-            ...event,
-            startTime: { toDate: () => new Date(event.startTime) },
-            endTime: { toDate: () => new Date(event.endTime) },
-            isLocal: true,
-          }));
+          // Filter events from 1 hour ago
+          const oneHourAgo = new Date();
+          oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+          console.log('📅 Raw local events:', parsedLocalEvents.length);
+          localEvents = parsedLocalEvents
+            .filter(event => new Date(event.startTime) >= oneHourAgo)
+            .map(event => ({
+              ...event,
+              startTime: { toDate: () => new Date(event.startTime) },
+              endTime: { toDate: () => new Date(event.endTime) },
+              isLocal: true,
+            }));
+          console.log('📅 Processed local events (from 1 hour ago):', localEvents.length);
         }
       } catch (localError) {
         console.log('Local events unavailable:', localError);
       }
 
-      // Set local events immediately for fast display
-      setEvents(localEvents);
-      
-      // Find today's events from local data
-      const today = moment().startOf('day');
-      const tomorrow = moment().add(1, 'day').startOf('day');
-      
-      const todayEventsData = localEvents.filter(event => {
-        const eventDate = moment(event.startTime.toDate());
-        return eventDate.isBetween(today, tomorrow, null, '[)');
+      // Load Firestore events
+      let firestoreEvents = [];
+      try {
+        await firestore().enableNetwork();
+        // First, let's get ALL events for this user to debug
+        console.log('📅 Firestore query - getting all events for user:', currentUser.uid);
+        const allEventsSnapshot = await firestore()
+          .collection('events')
+          .where('userId', '==', currentUser.uid)
+          .get();
+        
+        console.log('📅 Total events in Firestore for user:', allEventsSnapshot.docs.length);
+        allEventsSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          console.log('📅 Firestore event:', data.title, 'Start:', data.startTime?.toDate(), 'ID:', doc.id);
+        });
+        
+        // Get events from 1 hour ago to show recent past events too
+        const oneHourAgo = new Date();
+        oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+        const oneHourAgoTimestamp = firestore.Timestamp.fromDate(oneHourAgo);
+        console.log('📅 Calendar: Getting events from 1 hour ago:', oneHourAgoTimestamp.toDate());
+        const eventsSnapshot = await firestore()
+          .collection('events')
+          .where('userId', '==', currentUser.uid)
+          .where('startTime', '>=', oneHourAgoTimestamp)
+          .orderBy('startTime')
+          .get();
+        
+        firestoreEvents = eventsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          isLocal: false,
+        }));
+        console.log('📅 Loaded', firestoreEvents.length, 'events from Firestore in CalendarScreen');
+      } catch (firestoreError) {
+        console.log('⚠️ Firestore events unavailable in CalendarScreen:', firestoreError);
+      }
+
+      // Combine local and Firestore events, removing duplicates
+      // Prioritize Firestore events over local events
+      const allEventsMap = new Map();
+
+      // First add Firestore events
+      firestoreEvents.forEach(event => {
+        const eventTime = moment(event.startTime.toDate()).format('YYYY-MM-DD HH:mm');
+        const key = `${event.title}_${eventTime}_${event.location || ''}`;
+        allEventsMap.set(key, event);
+        console.log('📅 Added Firestore event:', event.title, 'at', eventTime);
       });
-      
-      setTodayEvents(todayEventsData);
-      
-      // Find next event from local data
-      const nextEventData = localEvents.find(event => 
-        moment(event.startTime.toDate()).isAfter(moment())
+
+      // Then add local events only if they don't exist in Firestore
+      localEvents.forEach(event => {
+        const eventTime = moment(event.startTime.toDate()).format('YYYY-MM-DD HH:mm');
+        const key = `${event.title}_${eventTime}_${event.location || ''}`;
+        if (!allEventsMap.has(key)) {
+          allEventsMap.set(key, event);
+          console.log('📅 Added local event:', event.title, 'at', eventTime);
+        } else {
+          console.log('📅 Skipping duplicate local event:', event.title, 'at', eventTime);
+        }
+      });
+
+      const allEvents = Array.from(allEventsMap.values()).sort((a, b) =>
+        new Date(a.startTime.toDate()) - new Date(b.startTime.toDate())
+      );
+
+      // Set all events for display
+      setEvents(allEvents);
+      console.log('📅 Setting events state to:', allEvents.length, 'events');
+
+      // Filter today's events (events that start today, exclude completed)
+      const todayStart = moment().startOf('day');
+      const todayEnd = moment().endOf('day');
+      const filteredTodayEvents = allEvents.filter(event => {
+        // Skip completed events
+        if (event.status === 'completed') {
+          return false;
+        }
+        const eventTime = moment(event.startTime.toDate());
+        const isToday = eventTime.isBetween(todayStart, todayEnd, null, '[]');
+        if (isToday) {
+          console.log('📅 Today event:', event.title, eventTime.format('YYYY-MM-DD HH:mm'));
+        }
+        return isToday;
+      });
+      setTodayEvents(filteredTodayEvents);
+      console.log('📅 Today\'s events:', filteredTodayEvents.length, 'events');
+
+      // Find next event from all data (exclude completed events)
+      const nextEventData = allEvents.find(event =>
+        event.status !== 'completed' && moment(event.startTime.toDate()).isAfter(moment())
       );
       setNextEvent(nextEventData);
 
-      // Load Firestore events in background (slower)
-      setTimeout(async () => {
-        try {
-          const eventsSnapshot = await firestore()
-            .collection('events')
-            .where('userId', '==', currentUser.uid)
-            .where('startTime', '>=', firestore.Timestamp.now())
-            .orderBy('startTime')
-            .limit(20)
-            .get();
-
-          const firestoreEvents = eventsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            isLocal: false,
-          }));
-
-          // Combine with local events
-          const allEvents = [...localEvents, ...firestoreEvents].sort((a, b) => 
-            new Date(a.startTime.toDate()) - new Date(b.startTime.toDate())
-          );
-
-          // Update with combined data
-          setEvents(allEvents);
-          
-          // Update today's events
-          const todayEventsData = allEvents.filter(event => {
-            const eventDate = moment(event.startTime.toDate());
-            return eventDate.isBetween(today, tomorrow, null, '[)');
+      // Schedule notifications for upcoming events
+      allEvents.forEach(event => {
+        if (event.status === 'upcoming') {
+          NotificationService.scheduleEventNotifications(event).catch(err => {
+            console.log('Failed to schedule notifications for event:', event.title, err);
           });
-          setTodayEvents(todayEventsData);
-          
-          // Update next event
-          const nextEventData = allEvents.find(event => 
-            moment(event.startTime.toDate()).isAfter(moment())
-          );
-          setNextEvent(nextEventData);
-
-        } catch (firestoreError) {
-          console.log('Firestore events unavailable:', firestoreError);
         }
-      }, 100); // Small delay to show local events first
+      });
+
+      console.log('📅 Loaded events for CalendarScreen:', allEvents.length, 'events');
+      console.log('📅 Local events:', localEvents.length);
+      console.log('📅 Firestore events:', firestoreEvents.length);
+      console.log('📅 Setting events state with', allEvents.length, 'events');
+      allEvents.forEach(event => console.log('  - Event:', event.title, 'Start:', event.startTime.toDate ? event.startTime.toDate() : event.startTime, 'isLocal:', event.isLocal));
+      
+      // Force a re-render to ensure events are displayed
+      setTimeout(() => {
+        console.log('📅 Events state after timeout:', events.length);
+      }, 1000);
       
     } catch (error) {
       console.error('Error loading events:', error);
@@ -264,8 +441,9 @@ const CalendarScreen = ({ navigation }) => {
         return;
       }
 
-      // Get access token
-      const tokens = await GoogleSignin.getTokens();
+      // Get access token safely
+      const calendarService = require('../../services/GoogleCalendarService').default;
+      const tokens = await calendarService.getTokensSafely();
       const accessToken = tokens.accessToken;
 
       if (!accessToken) {
@@ -348,8 +526,8 @@ const CalendarScreen = ({ navigation }) => {
     } else {
       eventTime = moment(event.startTime.toDate());
     }
-    const travelTime = event.travelTime || 15; // Default 15 minutes
-    const departureTime = eventTime.subtract(travelTime, 'minutes');
+    const travelTime = calculatedTravelTimes[event.id] || event.travelTime || 15; // Use calculated or default
+    const departureTime = eventTime.clone().subtract(travelTime, 'minutes');
     
     if (now.isAfter(departureTime)) {
       Alert.alert(
@@ -400,7 +578,12 @@ const CalendarScreen = ({ navigation }) => {
 
         // If it has a Google Calendar ID, delete from Google Calendar too
         if (eventToDelete.googleEventId) {
-          await deleteFromGoogleCalendar(eventToDelete.googleEventId);
+          try {
+            await deleteFromGoogleCalendar(eventToDelete.googleEventId);
+          } catch (error) {
+            console.log('Google Calendar deletion failed (may already be deleted):', error.message);
+            // Don't fail the entire delete operation if Google Calendar deletion fails
+          }
         }
       } else {
         // Delete Firestore event
@@ -408,7 +591,12 @@ const CalendarScreen = ({ navigation }) => {
         
         // If it has a Google Calendar ID, delete from Google Calendar too
         if (eventToDelete.googleEventId) {
-          await deleteFromGoogleCalendar(eventToDelete.googleEventId);
+          try {
+            await deleteFromGoogleCalendar(eventToDelete.googleEventId);
+          } catch (error) {
+            console.log('Google Calendar deletion failed (may already be deleted):', error.message);
+            // Don't fail the entire delete operation if Google Calendar deletion fails
+          }
         }
       }
 
@@ -432,7 +620,8 @@ const CalendarScreen = ({ navigation }) => {
       const isSignedIn = await GoogleSignin.isSignedIn();
       if (!isSignedIn) return;
 
-      const tokens = await GoogleSignin.getTokens();
+      const calendarService = require('../../services/GoogleCalendarService').default;
+      const tokens = await calendarService.getTokensSafely();
       const accessToken = tokens.accessToken;
 
       if (!accessToken) return;
@@ -449,8 +638,12 @@ const CalendarScreen = ({ navigation }) => {
 
       if (response.ok) {
         console.log('Event deleted from Google Calendar');
+      } else if (response.status === 410) {
+        console.log('Event already deleted from Google Calendar (410 - Gone)');
+        // 410 means the event was already deleted, which is fine
       } else {
         console.error('Failed to delete from Google Calendar:', response.status);
+        throw new Error(`Failed to delete from Google Calendar: ${response.status}`);
       }
     } catch (error) {
       console.error('Error deleting from Google Calendar:', error);
@@ -458,6 +651,16 @@ const CalendarScreen = ({ navigation }) => {
   };
 
   const getEventStatus = (event) => {
+    // If event is marked as completed, show completed status
+    if (event.status === 'completed') {
+      const wasOnTime = event.arrivedOnTime === true;
+      return {
+        status: 'completed',
+        color: wasOnTime ? '#4CAF50' : '#ff9800',
+        icon: wasOnTime ? 'check-circle' : 'schedule'
+      };
+    }
+
     const now = moment();
     // Handle timezone properly
     let eventTime;
@@ -466,9 +669,9 @@ const CalendarScreen = ({ navigation }) => {
     } else {
       eventTime = moment(event.startTime.toDate());
     }
-    const travelTime = event.travelTime || 15;
-    const departureTime = eventTime.subtract(travelTime, 'minutes');
-    
+    const travelTime = calculatedTravelTimes[event.id] || event.travelTime || 15;
+    const departureTime = eventTime.clone().subtract(travelTime, 'minutes');
+
     if (now.isAfter(eventTime)) {
       return { status: 'past', color: '#666', icon: 'check-circle' };
     } else if (now.isAfter(departureTime)) {
@@ -502,14 +705,13 @@ const CalendarScreen = ({ navigation }) => {
       console.error('❌ Error parsing event time:', error, event);
       eventTime = moment(event.startTime.toDate()).local();
     }
-    const travelTime = event.travelTime || 15;
-    const departureTime = eventTime.subtract(travelTime, 'minutes');
-    
+    const travelTime = calculatedTravelTimes[event.id] || event.travelTime || 15;
+    const departureTime = eventTime.clone().subtract(travelTime, 'minutes');
+
     return (
-      <TouchableOpacity
+      <View
         key={event.id}
         style={[styles.eventCard, isToday && styles.todayEventCard]}
-        onPress={() => handleStartLockMode(event)}
       >
         <LinearGradient
           colors={eventStatus.color === '#ff6b6b' ? ['#ff6b6b', '#ff8e8e'] : 
@@ -534,9 +736,16 @@ const CalendarScreen = ({ navigation }) => {
             <View style={styles.eventStatusContainer}>
               <Icon name={eventStatus.icon} size={16} color="#fff" />
               <Text style={styles.eventStatus}>
-                {eventStatus.status === 'departure' ? 'Leave Now!' : 
+                {eventStatus.status === 'completed' ? (event.arrivedOnTime ? 'Completed ✓' : 'Completed (Late)') :
+                 eventStatus.status === 'departure' ? 'Leave Now!' :
                  eventStatus.status === 'upcoming' ? 'Upcoming' : 'Past'}
               </Text>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => navigation.navigate('EditEvent', { event })}
+              >
+                <Icon name="edit" size={16} color="#fff" />
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.deleteButton}
                 onPress={() => handleDeleteEvent(event)}
@@ -547,33 +756,50 @@ const CalendarScreen = ({ navigation }) => {
           </View>
           
           <Text style={styles.eventTitle}>{event.title}</Text>
-          
+
+          {/* Journey Information */}
           {event.location && (
-            <View style={styles.eventLocationContainer}>
-              <Icon name="location-on" size={14} color="#fff" />
-              <Text style={styles.eventLocation}>{event.location}</Text>
+            <View style={styles.journeyInfoContainer}>
+              <View style={styles.journeyRow}>
+                <View style={styles.journeyPointSmall}>
+                  <View style={styles.toDotSmall} />
+                  <Text style={styles.journeyLabelSmall} numberOfLines={1}>To: {event.location.length > 25 ? event.location.substring(0, 25) + '...' : event.location}</Text>
+                </View>
+                <Icon name="arrow-forward" size={16} color="rgba(255,255,255,0.7)" />
+                <View style={styles.journeyPointSmall}>
+                  <View style={styles.fromDotSmall} />
+                  <Text style={styles.journeyLabelSmall} numberOfLines={1}>
+                    From: {event.origin && event.origin !== 'CURRENT_LOCATION' ? (event.origin.length > 25 ? event.origin.substring(0, 25) + '...' : event.origin) : currentAddress}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.travelTimeChipSmall}>
+                <Icon name="directions-car" size={12} color="#fff" />
+                <Text style={styles.travelTimeTextSmall}>{travelTime} min travel</Text>
+              </View>
             </View>
           )}
-          
+
           {eventStatus.status !== 'past' && (
             <View style={styles.departureInfo}>
+              <Icon name="notifications-active" size={14} color="#fff" />
               <Text style={styles.departureText}>
-                Departure: {departureTime.format('MMM D, h:mm A')}
-              </Text>
-              <Text style={styles.travelTimeText}>
-                Travel time: {travelTime} minutes
+                Leave at: {departureTime.format('h:mm A')}
               </Text>
             </View>
           )}
-          
+
           {eventStatus.status === 'departure' && (
-            <View style={styles.lockButtonContainer}>
+            <TouchableOpacity
+              style={styles.lockButtonContainer}
+              onPress={() => handleStartLockMode(event)}
+            >
               <Icon name="lock" size={20} color="#fff" />
               <Text style={styles.lockButtonText}>Tap to Start Lock Mode</Text>
-            </View>
+            </TouchableOpacity>
           )}
         </LinearGradient>
-      </TouchableOpacity>
+      </View>
     );
   };
 
@@ -626,14 +852,26 @@ const CalendarScreen = ({ navigation }) => {
         {todayEvents.length > 0 && (
           <View style={styles.todaySection}>
             <Text style={styles.sectionTitle}>📋 Today's Events</Text>
-            {todayEvents.map(event => renderEventCard(event, true))}
+            {todayEvents
+              .filter(event => !nextEvent || event.id !== nextEvent.id)
+              .map(event => renderEventCard(event, true))}
           </View>
         )}
 
         {events.length > 0 && (
           <View style={styles.upcomingSection}>
             <Text style={styles.sectionTitle}>🔮 Upcoming Events</Text>
-            {events.slice(0, 5).map(event => renderEventCard(event))}
+            {events
+              .filter(event => {
+                // Exclude completed events
+                if (event.status === 'completed') return false;
+                // Exclude events already shown in Next Event or Today's Events
+                if (nextEvent && event.id === nextEvent.id) return false;
+                if (todayEvents.some(todayEvent => todayEvent.id === event.id)) return false;
+                return true;
+              })
+              .slice(0, 5)
+              .map(event => renderEventCard(event))}
           </View>
         )}
 
@@ -644,13 +882,21 @@ const CalendarScreen = ({ navigation }) => {
             <Text style={styles.emptyStateText}>
               Sync your Google Calendar to see your upcoming events
             </Text>
-            <TouchableOpacity
-              style={styles.syncButton}
-              onPress={handleSyncCalendar}
-            >
-              <Icon name="sync" size={20} color="#fff" />
-              <Text style={styles.syncButtonText}>Sync Calendar</Text>
-            </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.syncButton}
+          onPress={handleSyncCalendar}
+        >
+          <Icon name="sync" size={20} color="#fff" />
+          <Text style={styles.syncButtonText}>Sync Calendar</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={[styles.syncButton, { marginTop: 10, backgroundColor: '#ff6b6b' }]}
+          onPress={loadEvents}
+        >
+          <Icon name="refresh" size={20} color="#fff" />
+          <Text style={styles.syncButtonText}>Force Reload Events</Text>
+        </TouchableOpacity>
           </View>
         )}
       </ScrollView>
@@ -840,17 +1086,76 @@ const styles = StyleSheet.create({
     fontSize: 14,
     opacity: 0.9,
   },
+  journeyInfoContainer: {
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+  },
+  journeyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  journeyPointSmall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  fromDotSmall: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#4CAF50',
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#fff',
+    alignSelf: 'center',
+  },
+  toDotSmall: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ff6b6b',
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#fff',
+    alignSelf: 'center',
+  },
+  journeyLabelSmall: {
+    fontSize: 11,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  travelTimeChipSmall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  travelTimeTextSmall: {
+    fontSize: 11,
+    color: '#fff',
+    fontWeight: 'bold',
+    marginLeft: 4,
+  },
   departureInfo: {
     backgroundColor: 'rgba(255,255,255,0.1)',
-    padding: 10,
+    padding: 8,
     borderRadius: 8,
     marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   departureText: {
     color: '#fff',
     fontSize: 12,
     fontWeight: 'bold',
-    marginBottom: 2,
+    marginLeft: 6,
   },
   travelTimeText: {
     color: '#fff',
@@ -892,6 +1197,12 @@ const styles = StyleSheet.create({
     marginBottom: 30,
     paddingHorizontal: 40,
     lineHeight: 20,
+  },
+  actionButton: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    padding: 4,
+    borderRadius: 4,
+    marginLeft: 8,
   },
   deleteButton: {
     backgroundColor: 'rgba(255,255,255,0.2)',
