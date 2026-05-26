@@ -4,7 +4,7 @@ class GoogleMapsService {
   constructor() {
     // You'll need to add your Google Maps API key here
     // Get it from: https://console.cloud.google.com/google/maps-apis
-    this.apiKey = 'AIzaSyCjpfpg6D4w8nnW10Xkoz8DoWGS-0b6v6Q'; // Google Maps API key
+    this.apiKey = 'AIzaSyCIy8BtRst4bJON-OnWbxIQOfdFT-qYomk'; // Google Maps API key
     this.enabled = true; // Enable by default since we have API key
     this.loadSettings();
   }
