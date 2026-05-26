@@ -1,12 +1,12 @@
 import React, { useContext, useState, useRef, useEffect } from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { TouchableOpacity, View, StyleSheet, ActionSheetIOS, Platform, Modal, Text, Animated, Dimensions } from 'react-native';
-import ReactNative from 'react-native';
+import { TouchableOpacity, View, StyleSheet, Text, Animated, Dimensions } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import LinearGradient from 'react-native-linear-gradient';
 import { BlurView } from '@react-native-community/blur';
 import { AuthContext } from '../contexts/AuthContext';
+import { Colors, BorderRadius } from '../styles/theme';
 
 // Import screens
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -47,13 +47,19 @@ const MainTabNavigator = () => {
 
           return <Icon name={iconName} size={size} color={color} />;
         },
-        tabBarActiveTintColor: '#667eea',
-        tabBarInactiveTintColor: 'gray',
+        tabBarActiveTintColor: Colors.text.primary,
+        tabBarInactiveTintColor: 'rgba(255, 255, 255, 0.7)', // Brighter for better visibility
         headerShown: false,
         tabBarStyle: {
           height: 70,
           paddingBottom: 10,
           paddingTop: 10,
+          backgroundColor: 'rgba(0, 0, 0, 0.8)', // Much more opaque for better visibility
+          borderTopWidth: 1,
+          borderTopColor: 'rgba(255, 255, 255, 0.3)', // Brighter border for contrast
+          position: 'absolute',
+          elevation: 0,
+          backdropFilter: 'blur(20px)', // Add blur effect
         },
       })}
     >

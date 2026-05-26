@@ -5,22 +5,38 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Image,
+  ImageBackground,
   KeyboardAvoidingView,
   Platform,
-  Alert
+  Alert,
+  StatusBar,
+  Dimensions
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import auth from '@react-native-firebase/auth';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import Theme, { 
+  Colors, 
+  Typography, 
+  Spacing, 
+  BorderRadius, 
+  CommonStyles, 
+  getTextShadow, 
+  getStrongTextShadow, 
+  getDynamicBackground, 
+  createGlassCard,
+  getBackgroundImage,
+  getFadeGradient,
+  getGreeting,
+  getTimeOfDay,
+  formatDate
+} from '../../styles/theme';
+import OnTimeHeroLogo from '../../components/OnTimeHeroLogo';
 
-GoogleSignin.configure({
-  scopes: ['https://www.googleapis.com/auth/calendar', 'email', 'profile'],
-  webClientId: '574885181091-rutnfbrqmiu01gjlp7gsfvo3mc2n8ecs.apps.googleusercontent.com',
-  offlineAccess: true,
-  forceCodeForRefreshToken: true,
-});
+const { height } = Dimensions.get('window');
+
+// GoogleSignin is configured centrally in GoogleCalendarService on import
 
 const LoginScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
@@ -126,28 +142,55 @@ const LoginScreen = ({ navigation }) => {
     }
   };
 
+  const backgroundImage = getBackgroundImage();
+  const fadeColors = getFadeGradient();
+  const greeting = getGreeting();
+  const timeOfDay = getTimeOfDay();
+
   return (
-    <LinearGradient
-      colors={['#667eea', '#764ba2']}
-      style={styles.container}
-    >
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      
+      {/* Background: Photo at top, seamless fade to gradient */}
+      <ImageBackground
+        source={{ uri: backgroundImage }}
+        style={styles.backgroundImage}
+        imageStyle={styles.backgroundImageStyle}
+      >
+        {/* Smooth fade overlay extending beyond image for seamless blend */}
+        <LinearGradient
+          colors={[
+            'rgba(0, 0, 0, 0)',      // Fully transparent at top
+            'rgba(0, 0, 0, 0)',      // Keep transparent for first 60% 
+            'rgba(0, 0, 0, 0.3)',    // Start fading
+            'rgba(0, 0, 0, 0.8)',    // More opaque
+            '#000',                   // Solid black at bottom
+          ]}
+          locations={[0, 0.6, 0.75, 0.9, 1]} // Control where each color appears
+          style={styles.imageFadeOverlay}
+        />
+        <LinearGradient
+          colors={fadeColors}
+          locations={fadeColors.map((_, index) => index / (fadeColors.length - 1))}
+          style={styles.gradientOverlay}
+        >
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
         <View style={styles.logoContainer}>
-          <Text style={styles.logoEmoji}>⏰</Text>
-          <Text style={styles.appName}>OnTime Hero</Text>
-          <Text style={styles.tagline}>Never Be Late Again!</Text>
+          <OnTimeHeroLogo width={100} height={112} />
+          <Text style={[styles.appName, getTextShadow()]}>OnTime Hero</Text>
+          <Text style={[styles.tagline, getTextShadow()]}>Never Be Late Again!</Text>
         </View>
 
-        <View style={styles.formContainer}>
+        <View style={[createGlassCard('neutral', 'large'), styles.formContainer]}>
           <View style={styles.inputContainer}>
-            <Icon name="email" size={20} color="#666" style={styles.inputIcon} />
+            <Icon name="email" size={20} color="rgba(255,255,255,0.8)" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Email"
-              placeholderTextColor="#999"
+              placeholderTextColor="rgba(255,255,255,0.6)"
               value={email}
               onChangeText={setEmail}
               keyboardType="email-address"
@@ -156,11 +199,11 @@ const LoginScreen = ({ navigation }) => {
           </View>
 
           <View style={styles.inputContainer}>
-            <Icon name="lock" size={20} color="#666" style={styles.inputIcon} />
+            <Icon name="lock" size={20} color="rgba(255,255,255,0.8)" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Password"
-              placeholderTextColor="#999"
+              placeholderTextColor="rgba(255,255,255,0.6)"
               value={password}
               onChangeText={setPassword}
               secureTextEntry
@@ -172,33 +215,56 @@ const LoginScreen = ({ navigation }) => {
             onPress={handleLogin}
             disabled={loading}
           >
-            <Text style={styles.loginButtonText}>
+            <Text style={[styles.loginButtonText, getTextShadow()]}>
               {loading ? 'Logging in...' : 'Login'}
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.googleButton}
+            style={[styles.googleButton]}
             onPress={handleGoogleSignIn}
           >
             <Icon name="g-mobiledata" size={24} color="#fff" />
-            <Text style={styles.googleButtonText}>Sign in with Google</Text>
+            <Text style={[styles.googleButtonText, getTextShadow()]}>Sign in with Google</Text>
           </TouchableOpacity>
 
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Don't have an account? </Text>
+            <Text style={[styles.footerText, getTextShadow()]}>Don't have an account? </Text>
             <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
-              <Text style={styles.signupLink}>Sign Up</Text>
+              <Text style={[styles.signupLink, getTextShadow()]}>Sign Up</Text>
             </TouchableOpacity>
           </View>
         </View>
       </KeyboardAvoidingView>
-    </LinearGradient>
+        </LinearGradient>
+      </ImageBackground>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  backgroundImage: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  backgroundImageStyle: {
+    height: height * 0.5, // Photo visible in top 50%
+    resizeMode: 'cover',
+    opacity: 0.9, // Slight transparency for better blend
+  },
+  imageFadeOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: height * 0.5, // Same height as the image
+  },
+  gradientOverlay: {
     flex: 1,
   },
   keyboardView: {
@@ -208,10 +274,6 @@ const styles = StyleSheet.create({
   logoContainer: {
     alignItems: 'center',
     marginBottom: 40,
-  },
-  logoEmoji: {
-    fontSize: 80,
-    marginBottom: 10,
   },
   appName: {
     fontSize: 36,
@@ -229,12 +291,12 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderRadius: 25,
     marginBottom: 15,
     paddingHorizontal: 20,
-    elevation: 3,
-    shadowColor: '#000',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
@@ -245,45 +307,61 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     height: 50,
-    color: '#333',
+    color: '#fff',
     fontSize: 16,
   },
   loginButton: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: 'rgba(76, 175, 80, 0.9)',
     borderRadius: 25,
     height: 50,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 10,
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
   disabledButton: {
     opacity: 0.7,
   },
   loginButtonText: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: 'bold',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
   },
   googleButton: {
     flexDirection: 'row',
-    backgroundColor: '#4285F4',
+    backgroundColor: 'rgba(66, 133, 244, 0.9)',
     borderRadius: 25,
     height: 50,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 15,
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
   googleButtonText: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
+    textAlign: 'center',
     marginLeft: 10,
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
   },
   footer: {
     flexDirection: 'row',

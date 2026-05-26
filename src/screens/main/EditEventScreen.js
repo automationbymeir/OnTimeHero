@@ -17,12 +17,17 @@ import moment from 'moment';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NotificationService from '../../services/NotificationService';
 import GoogleMapsService from '../../services/GoogleMapsService';
+import Theme, { Colors, Typography, Spacing, BorderRadius, CommonStyles, getTextShadow, getStrongTextShadow, getDynamicBackground, createGlassCard } from '../../styles/theme';
 
 const EditEventScreen = ({ navigation, route }) => {
   const { event } = route.params;
   const [title, setTitle] = useState(event.title || '');
   const [description, setDescription] = useState(event.description || '');
   const [location, setLocation] = useState(event.location || '');
+  const [fromUseCurrent, setFromUseCurrent] = useState(!event.origin || event.origin === 'CURRENT_LOCATION');
+  const [fromText, setFromText] = useState(event.origin && event.origin !== 'CURRENT_LOCATION' ? event.origin : '');
+  const [fromPredictions, setFromPredictions] = useState([]);
+  const [showFromPredictions, setShowFromPredictions] = useState(false);
   const [date, setDate] = useState(moment(event.startTime.toDate ? event.startTime.toDate() : event.startTime).format('YYYY-MM-DD'));
   const [time, setTime] = useState(moment(event.startTime.toDate ? event.startTime.toDate() : event.startTime).format('HH:mm'));
   const [loading, setLoading] = useState(false);
@@ -31,6 +36,27 @@ const EditEventScreen = ({ navigation, route }) => {
   const [locationPredictions, setLocationPredictions] = useState([]);
   const [showLocationPredictions, setShowLocationPredictions] = useState(false);
   const [calculatedTravelTime, setCalculatedTravelTime] = useState(event.travelTime || 15);
+  const [userLocation, setUserLocation] = useState(null);
+
+  // Get user location for location-based search
+  useEffect(() => {
+    const getLocation = async () => {
+      try {
+        const LocationService = require('../../services/LocationService').default;
+        const hasPermission = await LocationService.requestLocationPermission();
+        if (hasPermission) {
+          const location = await LocationService.getCurrentLocation();
+          if (location) {
+            setUserLocation(location);
+            console.log('📍 User location set for predictions:', location);
+          }
+        }
+      } catch (error) {
+        console.log('Could not get user location for predictions:', error);
+      }
+    };
+    getLocation();
+  }, []);
 
   const handleUpdateEvent = async () => {
     if (!title || !date || !time) {
@@ -102,6 +128,7 @@ const EditEventScreen = ({ navigation, route }) => {
         title,
         description,
         location,
+        origin: fromUseCurrent ? 'CURRENT_LOCATION' : fromText,
         startTime: eventDateTime,
         endTime: moment(eventDateTime).add(1, 'hour').toDate(),
         travelTime: travelTime,
@@ -141,7 +168,9 @@ const EditEventScreen = ({ navigation, route }) => {
         if (existingEvents) {
           const events = JSON.parse(existingEvents);
           console.log('📝 Updating local event in AsyncStorage');
-          const updatedEvents = events.map(e =>
+          // Replace the event in place and remove any other local events that match the old title/time to avoid duplicates
+          const updatedEvents = events
+            .map(e =>
             e.id === event.id
               ? {
                   ...e,
@@ -150,8 +179,15 @@ const EditEventScreen = ({ navigation, route }) => {
                   endTime: moment(eventDateTime).add(1, 'hour').toISOString(),
                   lastModified: lastModified.toISOString(),
                 }
-              : e
-          );
+              : e)
+            .filter(e => {
+              if (e.id === event.id) return true; // keep updated one
+              const sameOldTitle = (e.title || '').trim().toLowerCase() === (event.title || '').trim().toLowerCase();
+              const sameOldTime = moment(e.startTime).isSame(moment(event.startTime.toDate ? event.startTime.toDate() : event.startTime));
+              const sameLocation = (e.location || '') === (event.location || '');
+              // Drop any stale duplicates that match the old event signature
+              return !(sameOldTitle && sameOldTime && sameLocation);
+            });
           await AsyncStorage.setItem('localEvents', JSON.stringify(updatedEvents));
           console.log('✅ Local event updated successfully');
         }
@@ -171,6 +207,10 @@ const EditEventScreen = ({ navigation, route }) => {
       // Schedule new notifications
       const updatedEvent = { ...event, ...updatedEventData, startTime: { toDate: () => eventDateTime } };
       await NotificationService.scheduleEventNotifications(updatedEvent);
+
+      // Emit update so dashboard can refresh and deduplicate immediately
+      const { DeviceEventEmitter } = require('react-native');
+      DeviceEventEmitter.emit('EVENT_ROUTE_UPDATED', { id: event.id, origin: event.origin, location: updatedEvent.location });
 
       Alert.alert('Success', 'Event updated successfully!', [
         {
@@ -208,15 +248,68 @@ const EditEventScreen = ({ navigation, route }) => {
         return false;
       }
 
+      // First, get the existing event to preserve its type
+      const existingEventResponse = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${googleEventId}`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+      if (!existingEventResponse.ok) {
+        console.error('❌ Failed to fetch existing event:', existingEventResponse.status);
+        return false;
+      }
+
+      const existingEvent = await existingEventResponse.json();
+      console.log('📝 Existing event type:', existingEvent.start?.date ? 'all-day' : 'timed');
+      console.log('📝 existingEvent.eventType:', existingEvent.eventType);
+
+      // Some Google Calendar special event types (e.g., Out of office, Focus time, Working location, fromGmail)
+      // cannot be converted to a normal event or edited as a normal event. If the eventType is
+      // set and is not 'default', short-circuit with a clear message and avoid the failing request.
+      const specialEventTypes = ['outOfOffice', 'focusTime', 'workingLocation', 'fromGmail', 'unknown'];
+      if (existingEvent.eventType && specialEventTypes.includes(existingEvent.eventType)) {
+        console.warn('⚠️ Special Google Calendar event type detected:', existingEvent.eventType);
+        
+        // Use setTimeout to ensure the alert shows after any pending operations
+        setTimeout(() => {
+          Alert.alert(
+            'Update Not Allowed',
+            `This Google Calendar item is a special event (${existingEvent.eventType}). It cannot be updated from the app. Please edit it directly in Google Calendar.`,
+            [
+              { 
+                text: 'OK',
+                onPress: () => console.log('User acknowledged special event type restriction')
+              }
+            ]
+          );
+        }, 100);
+        
+        return false;
+      }
+
+      // Preserve the original event type (all-day vs timed)
       const googleEvent = {
         summary: eventData.title,
         description: eventData.description,
         location: eventData.location,
-        start: {
+        start: existingEvent.start?.date ? {
+          // All-day event
+          date: moment(eventData.startTime).format('YYYY-MM-DD'),
+        } : {
+          // Timed event
           dateTime: eventData.startTime.toISOString(),
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
-        end: {
+        end: existingEvent.end?.date ? {
+          // All-day event
+          date: moment(eventData.endTime).format('YYYY-MM-DD'),
+        } : {
+          // Timed event
           dateTime: eventData.endTime.toISOString(),
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
@@ -226,15 +319,21 @@ const EditEventScreen = ({ navigation, route }) => {
       console.log('📝 Event ID:', googleEventId);
       console.log('📝 Event data:', JSON.stringify(googleEvent, null, 2));
 
+      // Use PATCH to only update provided fields and reduce chances of type-related errors
       const response = await fetch(
         `https://www.googleapis.com/calendar/v3/calendars/primary/events/${googleEventId}`,
         {
-          method: 'PUT',
+          method: 'PATCH',
           headers: {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(googleEvent),
+          // Preserve eventType if present (default). While not required for default, being explicit avoids
+          // server-side inferences that might trigger restrictions.
+          body: JSON.stringify({
+            ...googleEvent,
+            eventType: existingEvent.eventType || 'default',
+          }),
         }
       );
 
@@ -246,6 +345,41 @@ const EditEventScreen = ({ navigation, route }) => {
       } else {
         const errorText = await response.text();
         console.error('❌ Failed to update in Google Calendar:', response.status, errorText);
+        
+        // Parse error details for better user feedback
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson.error?.errors?.[0]?.reason === 'eventTypeRestriction') {
+            console.error('❌ Event type restriction error - cannot change event type');
+            Alert.alert(
+              'Update Not Allowed',
+              'This Google Calendar event has restrictions that prevent updates from the app. Please edit it directly in Google Calendar.',
+              [{ text: 'OK' }]
+            );
+          } else if (errorJson.error?.errors?.[0]?.reason === 'forbidden') {
+            console.error('❌ Forbidden error - insufficient permissions');
+            Alert.alert(
+              'Permission Denied',
+              'You don\'t have permission to edit this Google Calendar event. Please check your calendar permissions.',
+              [{ text: 'OK' }]
+            );
+          } else {
+            console.error('❌ Other Google Calendar error:', errorJson.error?.message || 'Unknown error');
+            Alert.alert(
+              'Update Failed',
+              `Failed to update event in Google Calendar: ${errorJson.error?.message || 'Unknown error'}. Please try again or edit directly in Google Calendar.`,
+              [{ text: 'OK' }]
+            );
+          }
+        } catch (parseError) {
+          console.error('❌ Could not parse error response:', parseError);
+          Alert.alert(
+            'Update Failed',
+            'Failed to update event in Google Calendar. Please check your internet connection and try again.',
+            [{ text: 'OK' }]
+          );
+        }
+        
         return false;
       }
     } catch (error) {
@@ -258,7 +392,7 @@ const EditEventScreen = ({ navigation, route }) => {
     setLocation(text);
 
     if (text.length > 2) {
-      const predictions = await GoogleMapsService.getPlacePredictions(text);
+      const predictions = await GoogleMapsService.getPlacePredictions(text, userLocation);
       setLocationPredictions(predictions);
       setShowLocationPredictions(predictions.length > 0);
     } else {
@@ -287,9 +421,29 @@ const EditEventScreen = ({ navigation, route }) => {
     }
   };
 
+  const handleFromChange = async (text) => {
+    setFromText(text);
+
+    if (text.length > 2) {
+      const predictions = await GoogleMapsService.getPlacePredictions(text, userLocation);
+      setFromPredictions(predictions);
+      setShowFromPredictions(predictions.length > 0);
+    } else {
+      setFromPredictions([]);
+      setShowFromPredictions(false);
+    }
+  };
+
+  const handleSelectFrom = async (prediction) => {
+    setFromText(prediction.description);
+    setShowFromPredictions(false);
+  };
+
+  const backgroundColors = getDynamicBackground();
+
   return (
     <LinearGradient
-      colors={['#667eea', '#764ba2']}
+      colors={backgroundColors}
       style={styles.container}
     >
       <View style={styles.header}>
@@ -299,13 +453,13 @@ const EditEventScreen = ({ navigation, route }) => {
         >
           <Icon name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Edit Event</Text>
+        <Text style={[styles.headerTitle, getStrongTextShadow()]}>Edit Event</Text>
       </View>
 
       <ScrollView style={styles.content}>
         <View style={styles.form}>
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Event Title *</Text>
+            <Text style={[styles.label, getStrongTextShadow()]}>Event Title *</Text>
             <TextInput
               style={styles.input}
               value={title}
@@ -316,7 +470,7 @@ const EditEventScreen = ({ navigation, route }) => {
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Description</Text>
+            <Text style={[styles.label, getStrongTextShadow()]}>Description</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
               value={description}
@@ -329,7 +483,7 @@ const EditEventScreen = ({ navigation, route }) => {
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Location</Text>
+            <Text style={[styles.label, getStrongTextShadow()]}>Location</Text>
             <TextInput
               style={styles.input}
               value={location}
@@ -368,9 +522,98 @@ const EditEventScreen = ({ navigation, route }) => {
             )}
           </View>
 
+          {/* From/To Fields */}
+          <View style={styles.inputGroup}>
+            <Text style={[styles.label, getStrongTextShadow()]}>From (Origin)</Text>
+            <View style={styles.fromToToggle}>
+              <TouchableOpacity
+                style={[styles.toggleButton, fromUseCurrent && styles.toggleButtonActive]}
+                onPress={() => setFromUseCurrent(true)}
+              >
+                <Text style={[styles.toggleButtonText, fromUseCurrent && styles.toggleButtonTextActive]}>
+                  Current Location
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.toggleButton, !fromUseCurrent && styles.toggleButtonActive]}
+                onPress={() => setFromUseCurrent(false)}
+              >
+                <Text style={[styles.toggleButtonText, !fromUseCurrent && styles.toggleButtonTextActive]}>
+                  Custom
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {!fromUseCurrent && (
+              <View style={styles.inputContainer}>
+                <TextInput
+                  style={styles.input}
+                  value={fromText}
+                  onChangeText={handleFromChange}
+                  placeholder="Enter origin address"
+                  placeholderTextColor="rgba(255,255,255,0.6)"
+                />
+                {showFromPredictions && fromPredictions.length > 0 && (
+                  <View style={styles.predictionsContainer}>
+                    {fromPredictions.map((prediction) => (
+                      <TouchableOpacity
+                        key={prediction.placeId}
+                        style={styles.predictionItem}
+                        onPress={() => handleSelectFrom(prediction)}
+                      >
+                        <Icon name="location-on" size={20} color="rgba(255,255,255,0.8)" />
+                        <View style={styles.predictionTextContainer}>
+                          <Text style={styles.predictionMainText}>
+                            {prediction.mainText}
+                          </Text>
+                          <Text style={styles.predictionSecondaryText}>
+                            {prediction.secondaryText}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={[styles.label, getStrongTextShadow()]}>To (Destination)</Text>
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.input}
+                value={location}
+                onChangeText={handleLocationChange}
+                placeholder="Enter destination"
+                placeholderTextColor="rgba(255,255,255,0.6)"
+              />
+              {showLocationPredictions && locationPredictions.length > 0 && (
+                <View style={styles.predictionsContainer}>
+                  {locationPredictions.map((prediction) => (
+                    <TouchableOpacity
+                      key={prediction.placeId}
+                      style={styles.predictionItem}
+                      onPress={() => handleSelectLocation(prediction)}
+                    >
+                      <Icon name="location-on" size={20} color="rgba(255,255,255,0.8)" />
+                      <View style={styles.predictionTextContainer}>
+                        <Text style={styles.predictionMainText}>
+                          {prediction.mainText}
+                        </Text>
+                        <Text style={styles.predictionSecondaryText}>
+                          {prediction.secondaryText}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+          </View>
+
           <View style={styles.row}>
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Date *</Text>
+              <Text style={[styles.label, getStrongTextShadow()]}>Date *</Text>
               <TouchableOpacity
                 style={[styles.input, styles.clickableInput]}
                 onPress={() => setShowDatePicker(true)}
@@ -381,7 +624,7 @@ const EditEventScreen = ({ navigation, route }) => {
             </View>
 
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Time *</Text>
+              <Text style={[styles.label, getStrongTextShadow()]}>Time *</Text>
               <View style={styles.timeInputContainer}>
                 <TextInput
                   style={[styles.input, styles.timeInput]}
@@ -430,7 +673,9 @@ const EditEventScreen = ({ navigation, route }) => {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Select Date</Text>
             <View style={styles.dateOptions}>
-              {[0, 1, 2, 3, 4, 5, 6, 7].map(days => {
+              {/* Quick options for next 7 days */}
+              <Text style={styles.dateSectionTitle}>Quick Select</Text>
+              {[0, 1, 2, 3, 4, 5, 6].map(days => {
                 const optionDate = moment().add(days, 'days');
                 const isSelected = moment(date, 'YYYY-MM-DD').format('YYYY-MM-DD') === optionDate.format('YYYY-MM-DD');
                 return (
@@ -451,6 +696,47 @@ const EditEventScreen = ({ navigation, route }) => {
                   </TouchableOpacity>
                 );
               })}
+              
+              {/* Custom date picker */}
+              <Text style={styles.dateSectionTitle}>Custom Date</Text>
+              <View style={styles.customDateContainer}>
+                <Text style={styles.customDateLabel}>Select any date:</Text>
+                <View style={styles.dateInputRow}>
+                  <TextInput
+                    style={styles.dateInput}
+                    value={date}
+                    onChangeText={(text) => {
+                      // Validate date format
+                      if (moment(text, 'YYYY-MM-DD', true).isValid()) {
+                        setDate(text);
+                      }
+                    }}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="rgba(255,255,255,0.6)"
+                    keyboardType="numeric"
+                  />
+                  <TouchableOpacity
+                    style={styles.todayButton}
+                    onPress={() => {
+                      setDate(moment().format('YYYY-MM-DD'));
+                    }}
+                  >
+                    <Text style={styles.todayButtonText}>Today</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  style={styles.confirmDateButton}
+                  onPress={() => {
+                    if (moment(date, 'YYYY-MM-DD', true).isValid()) {
+                      setShowDatePicker(false);
+                    } else {
+                      Alert.alert('Invalid Date', 'Please enter a valid date in YYYY-MM-DD format');
+                    }
+                  }}
+                >
+                  <Text style={styles.confirmDateButtonText}>Confirm Date</Text>
+                </TouchableOpacity>
+              </View>
             </View>
             <TouchableOpacity
               style={styles.modalCloseButton}
@@ -510,38 +796,31 @@ const EditEventScreen = ({ navigation, route }) => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: CommonStyles.container,
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 20,
-    paddingTop: 60,
+    ...CommonStyles.row,
+    padding: Spacing.lg,
+    paddingTop: Spacing.huge,
+    backgroundColor: Colors.glass.black10,
   },
   backButton: {
-    marginRight: 15,
+    marginRight: Spacing.base,
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
+  headerTitle: Typography.h3,
   content: {
     flex: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: Spacing.lg,
   },
   form: {
-    paddingBottom: 40,
+    paddingBottom: Spacing.xxxl,
   },
   inputGroup: {
-    marginBottom: 20,
+    marginBottom: Spacing.lg,
   },
   label: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
+    ...Typography.h5,
+    ...getStrongTextShadow(),
+    marginBottom: Spacing.sm,
   },
   input: {
     backgroundColor: 'rgba(255,255,255,0.2)',
@@ -575,18 +854,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  predictionsContainer: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 10,
-    marginTop: 10,
-    maxHeight: 200,
-  },
+        predictionsContainer: {
+          backgroundColor: 'rgba(0,0,0,0.95)',
+          borderRadius: 10,
+          marginTop: 5,
+          maxHeight: 200,
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          right: 0,
+          zIndex: 9999,
+          elevation: 20,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.5,
+          shadowRadius: 12,
+          borderWidth: 1,
+          borderColor: 'rgba(255,255,255,0.1)',
+        },
   predictionItem: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.1)',
+    minHeight: 50,
   },
   predictionTextContainer: {
     marginLeft: 10,
@@ -730,6 +1022,90 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  fromToToggle: {
+    flexDirection: 'row',
+    marginBottom: 10,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8,
+    padding: 4,
+  },
+  toggleButton: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  toggleButtonActive: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  toggleButtonText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  toggleButtonTextActive: {
+    color: '#fff',
+  },
+  inputContainer: {
+    position: 'relative',
+  },
+  dateSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 15,
+    marginBottom: 10,
+  },
+  customDateContainer: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    padding: 15,
+    marginTop: 10,
+  },
+  customDateLabel: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 10,
+  },
+  dateInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  dateInput: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    color: '#333',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    marginRight: 10,
+  },
+  todayButton: {
+    backgroundColor: '#667eea',
+    borderRadius: 8,
+    padding: 12,
+    paddingHorizontal: 16,
+  },
+  todayButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  confirmDateButton: {
+    backgroundColor: '#28a745',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+  },
+  confirmDateButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',

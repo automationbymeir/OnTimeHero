@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
+import { getTextShadow } from '../../styles/theme';
 
 const XPProgressBar = ({ currentXP, level, style }) => {
   const currentLevelXP = (level - 1) * 100;
@@ -21,15 +22,15 @@ const XPProgressBar = ({ currentXP, level, style }) => {
     <View style={[styles.container, style]}>
       <View style={styles.levelContainer}>
         <LinearGradient colors={getLevelColor()} style={styles.levelBadge}>
-          <Text style={styles.levelText}>{level}</Text>
+          <Text style={[styles.levelText, getTextShadow()]}>{level}</Text>
         </LinearGradient>
-        <Text style={styles.levelLabel}>Level</Text>
+        <Text style={[styles.levelLabel, getTextShadow()]}>Level</Text>
       </View>
       
       <View style={styles.progressContainer}>
         <View style={styles.xpInfo}>
-          <Text style={styles.xpText}>{currentXP} XP</Text>
-          <Text style={styles.nextLevelText}>{nextLevelXP - currentXP} XP to next level</Text>
+          <Text style={[styles.xpText, getTextShadow()]}>{currentXP} XP</Text>
+          <Text style={[styles.nextLevelText, getTextShadow()]}>{nextLevelXP - currentXP} XP to next level</Text>
         </View>
         
         <View style={styles.progressBarContainer}>
@@ -53,10 +54,12 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     borderRadius: 15,
     padding: 15,
     marginVertical: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   levelContainer: {
     alignItems: 'center',
@@ -77,7 +80,7 @@ const styles = StyleSheet.create({
   },
   levelLabel: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.7)',
+    color: '#fff',
     fontWeight: '500',
   },
   progressContainer: {
@@ -96,7 +99,7 @@ const styles = StyleSheet.create({
   },
   nextLevelText: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.7)',
+    color: '#fff',
   },
   progressBarContainer: {
     height: 8,

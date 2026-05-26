@@ -3,7 +3,7 @@
  * @format
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -17,25 +17,21 @@ import { AuthProvider } from './src/contexts/AuthContext';
 const App = () => {
   const [initializing, setInitializing] = useState(true);
   const [user, setUser] = useState();
+  const initializingRef = useRef(true);
 
   useEffect(() => {
-    // Initialize notification service
-    // NotificationService is already initialized as a singleton
-    
-    // Request notification permissions
     requestNotificationPermission();
-    
-    // Handle authentication state changes
+
     const subscriber = auth().onAuthStateChanged(onAuthStateChanged);
-    
-    // Set a timeout to prevent infinite loading
+
+    // Use a ref so the timeout sees the live value, not a stale closure
     const timeoutId = setTimeout(() => {
-      if (initializing) {
+      if (initializingRef.current) {
         console.log('Firebase auth initialization timeout, proceeding anyway');
         setInitializing(false);
       }
     }, 5000);
-    
+
     return () => {
       subscriber();
       clearTimeout(timeoutId);
@@ -43,20 +39,27 @@ const App = () => {
   }, []);
 
   const requestNotificationPermission = async () => {
-    const authStatus = await messaging().requestPermission();
-    const enabled =
-      authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-      authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+    try {
+      const authStatus = await messaging().requestPermission();
+      const enabled =
+        authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+        authStatus === messaging.AuthorizationStatus.PROVISIONAL;
 
-    if (enabled) {
-      const token = await messaging().getToken();
-      await AsyncStorage.setItem('fcmToken', token);
+      if (enabled) {
+        const token = await messaging().getToken();
+        await AsyncStorage.setItem('fcmToken', token);
+      }
+    } catch (error) {
+      console.warn('Notification permission error:', error);
     }
   };
 
   const onAuthStateChanged = (user: any) => {
     setUser(user);
-    if (initializing) setInitializing(false);
+    if (initializingRef.current) {
+      initializingRef.current = false;
+      setInitializing(false);
+    }
   };
 
   if (initializing) {

@@ -6,11 +6,13 @@ import {
   StyleSheet,
   TouchableOpacity,
   RefreshControl,
+  DeviceEventEmitter,
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import moment from 'moment';
+import Theme, { Colors, Typography, Spacing, BorderRadius, CommonStyles, getTextShadow, getStrongTextShadow, getDynamicBackground, createGlassCard } from '../../styles/theme';
 
 const NotificationsScreen = ({ navigation }) => {
   const [notifications, setNotifications] = useState([]);
@@ -45,10 +47,33 @@ const NotificationsScreen = ({ navigation }) => {
     setRefreshing(false);
   };
 
+  const markAsRead = async (notificationId) => {
+    try {
+      const updatedNotifications = notifications.map(notification => 
+        notification.id === notificationId 
+          ? { ...notification, read: true }
+          : notification
+      );
+      
+      await AsyncStorage.setItem('userNotifications', JSON.stringify(updatedNotifications));
+      setNotifications(updatedNotifications);
+      
+      // Emit event to update notification count on dashboard
+      DeviceEventEmitter.emit('NOTIFICATION_READ');
+      console.log('📱 NotificationsScreen: Emitted NOTIFICATION_READ event');
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+    }
+  };
+
   const clearNotifications = async () => {
     try {
       await AsyncStorage.setItem('userNotifications', JSON.stringify([]));
       setNotifications([]);
+      
+      // Emit event to update notification count on dashboard
+      DeviceEventEmitter.emit('NOTIFICATIONS_CLEARED');
+      console.log('📱 NotificationsScreen: Emitted NOTIFICATIONS_CLEARED event');
     } catch (error) {
       console.error('Error clearing notifications:', error);
     }
@@ -80,6 +105,11 @@ const NotificationsScreen = ({ navigation }) => {
         key={index}
         style={styles.notificationCard}
         onPress={() => {
+          // Mark notification as read when tapped
+          if (!notification.read) {
+            markAsRead(notification.id);
+          }
+          
           // Handle notification tap - could navigate to relevant screen
           if (notification.eventId) {
             // Navigate to event details if available
@@ -99,9 +129,11 @@ const NotificationsScreen = ({ navigation }) => {
     );
   };
 
+  const backgroundColors = getDynamicBackground();
+
   return (
     <LinearGradient
-      colors={['#667eea', '#764ba2']}
+      colors={backgroundColors}
       style={styles.container}
     >
       <View style={styles.header}>
@@ -111,7 +143,7 @@ const NotificationsScreen = ({ navigation }) => {
         >
           <Icon name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Notifications</Text>
+        <Text style={[styles.headerTitle, getStrongTextShadow()]}>Notifications</Text>
         {notifications.length > 0 && (
           <TouchableOpacity
             style={styles.clearButton}

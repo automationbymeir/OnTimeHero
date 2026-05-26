@@ -12,6 +12,19 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import moment from 'moment';
 import LocationService from '../../services/LocationService';
 import GoogleMapsService from '../../services/GoogleMapsService';
+import Theme, {
+  Colors,
+  Typography,
+  Spacing,
+  BorderRadius,
+  CommonStyles,
+  getTextShadow,
+  getStrongTextShadow,
+  getSubtleTextShadow,
+  getStatusColor,
+  createGlassCard,
+  formatTime,
+} from '../../styles/theme';
 
 const NextEventCard = ({ event, onLeaveNow, onCardPress, onStartJourney }) => {
   const [timeToLeave, setTimeToLeave] = useState('');
@@ -21,6 +34,15 @@ const NextEventCard = ({ event, onLeaveNow, onCardPress, onStartJourney }) => {
   const [loadingLocation, setLoadingLocation] = useState(true);
   const [calculatedTravelTime, setCalculatedTravelTime] = useState(null);
   const isCompleted = event.status === 'completed';
+
+  // Listen for status changes to update isTimeToGo
+  useEffect(() => {
+    if (event.status === 'time-to-leave') {
+      setIsTimeToGo(true);
+      setTimeToLeave('Leave now!');
+      console.log('🔴 NextEventCard: Status changed to time-to-leave, setting isTimeToGo to true');
+    }
+  }, [event.status]);
 
   // Get current location and reverse geocode to address
   useEffect(() => {
@@ -130,6 +152,14 @@ const NextEventCard = ({ event, onLeaveNow, onCardPress, onStartJourney }) => {
       const diff = leaveTime.diff(now, 'minutes');
       const hoursUntilLeave = diff / 60;
 
+      console.log('⏰ NextEventCard timer:', {
+        event: event.title,
+        eventTime: eventTime.format('HH:mm'),
+        leaveTime: leaveTime.format('HH:mm'),
+        minutesUntilLeave: diff,
+        currentTime: now.format('HH:mm')
+      });
+
       // NEVER show red ("time to go") for events more than 24 hours away
       if (hoursUntilLeave > 24) {
         setIsTimeToGo(false);
@@ -141,10 +171,17 @@ const NextEventCard = ({ event, onLeaveNow, onCardPress, onStartJourney }) => {
       } else if (diff <= 0) {
         setIsTimeToGo(true);
         setTimeToLeave('Leave now!');
+        console.log('🔴 Card should be RED - Leave now!');
       } else if (diff < 60) {
         setTimeToLeave(`Leave in ${diff} minutes`);
-        if (diff <= 5) setIsTimeToGo(true);
+        if (diff <= 5) {
+          setIsTimeToGo(true);
+          console.log('🔴 Card should be RED - Leave in', diff, 'minutes');
+        } else {
+          setIsTimeToGo(false);
+        }
       } else {
+        setIsTimeToGo(false);
         const totalHours = Math.floor(diff / 60);
         const mins = diff % 60;
         setTimeToLeave(`Leave in ${totalHours}h ${mins}m`);
@@ -166,55 +203,54 @@ const NextEventCard = ({ event, onLeaveNow, onCardPress, onStartJourney }) => {
     return () => sub.remove();
   }, [event]);
 
-  // Choose gradient colors based on status
-  const gradientColors = isCompleted
-    ? (event.arrivedOnTime === true)
-      ? ['#4CAF50', '#66bb6a'] // Green for on-time arrival
-      : ['#ff9800', '#ffb74d'] // Orange for late arrival
-    : isTimeToGo
-    ? ['#ff6b6b', '#ff8e53'] // Red for time to go
-    : ['#667eea', '#764ba2']; // Purple for upcoming
+  // Determine card status based on event state
+  const getCardStatus = () => {
+    if (isCompleted) {
+      return event.arrivedOnTime === true ? 'success' : 'warning';
+    }
+    if (isTimeToGo) {
+      return 'danger';
+    }
+    return 'info';
+  };
+
+  const cardStatus = getCardStatus();
 
   return (
     <TouchableOpacity
       activeOpacity={0.8}
       onPress={() => onCardPress && onCardPress(event)}
     >
-      <LinearGradient
-        colors={gradientColors}
-        style={[styles.container, (isTimeToGo || isCompleted) && styles.urgentContainer]}
-      >
+      <View style={[
+        createGlassCard(cardStatus, 'large'),
+        (isTimeToGo || isCompleted) && styles.urgentContainer
+      ]}>
       {isCompleted && (
         <View style={styles.urgentBadge}>
-          <Icon name={event.arrivedOnTime === true ? 'check-circle' : 'schedule'} size={20} color="#fff" />
-          <Text style={styles.urgentText}>
+          <Icon 
+            name={event.arrivedOnTime === true ? 'check-circle' : 'schedule'} 
+            size={20} 
+            color={getStatusColor(cardStatus)} 
+          />
+          <Text style={[styles.urgentText, getStrongTextShadow()]}>
             {event.arrivedOnTime === true ? 'ARRIVED ON TIME!' : 'ARRIVED LATE'}
           </Text>
         </View>
       )}
       {!isCompleted && isTimeToGo && (
         <View style={styles.urgentBadge}>
-          <Icon name="warning" size={20} color="#fff" />
-          <Text style={styles.urgentText}>TIME TO GO!</Text>
+          <Icon name="warning" size={20} color={getStatusColor(cardStatus)} />
+          <Text style={[styles.urgentText, getStrongTextShadow()]}>TIME TO GO!</Text>
         </View>
       )}
 
-      <Text style={styles.eventDate}>
+      <Text style={[styles.eventDate, getTextShadow()]}>
         {moment(event.startTime.toDate()).format('dddd, MMMM D')}
       </Text>
-      <Text style={styles.eventTime}>
-        {(() => {
-          const eventTime = moment(event.startTime.toDate());
-          console.log('🎯 NextEventCard displaying time:', {
-            original: event.startTime,
-            toDate: event.startTime.toDate(),
-            moment: eventTime.format('YYYY-MM-DD HH:mm:ss'),
-            display: eventTime.format('h:mm A')
-          });
-          return eventTime.format('h:mm A');
-        })()}
+      <Text style={[styles.eventTime, getStrongTextShadow()]}>
+        {formatTime(event.startTime.toDate())}
       </Text>
-      <Text style={styles.eventName}>{event.title}</Text>
+      <Text style={[styles.eventName, getStrongTextShadow()]}>{event.title}</Text>
 
       {/* Journey Visualization */}
       {event.location && (
@@ -223,8 +259,8 @@ const NextEventCard = ({ event, onLeaveNow, onCardPress, onStartJourney }) => {
             <View style={styles.journeyPoint}>
               <View style={styles.toDot} />
               <View style={styles.journeyInfo}>
-                <Text style={styles.journeyLabel}>To</Text>
-                <Text style={styles.journeyLocation} numberOfLines={2}>
+                <Text style={[styles.journeyLabel, getTextShadow()]}>To</Text>
+                <Text style={[styles.journeyLocation, getStrongTextShadow()]} numberOfLines={2}>
                   {event.location.length > 30 ? event.location.substring(0, 30) + '...' : event.location}
                 </Text>
               </View>
@@ -234,7 +270,7 @@ const NextEventCard = ({ event, onLeaveNow, onCardPress, onStartJourney }) => {
               <Icon name="arrow-forward" size={24} color="rgba(255,255,255,0.8)" />
               <View style={styles.travelTimeChip}>
                 <Icon name="directions-car" size={14} color="#fff" />
-                <Text style={styles.travelTimeText}>
+                <Text style={[styles.travelTimeText, getTextShadow()]}>
                   {calculatedTravelTime || event.travelTime || 15} min
                 </Text>
               </View>
@@ -243,8 +279,8 @@ const NextEventCard = ({ event, onLeaveNow, onCardPress, onStartJourney }) => {
             <View style={styles.journeyPoint}>
               <View style={styles.fromDot} />
               <View style={styles.journeyInfo}>
-                <Text style={styles.journeyLabel}>From</Text>
-                <Text style={styles.journeyLocation} numberOfLines={1}>
+                <Text style={[styles.journeyLabel, getTextShadow()]}>From</Text>
+                <Text style={[styles.journeyLocation, getStrongTextShadow()]} numberOfLines={1}>
                   {event.origin && event.origin !== 'CURRENT_LOCATION'
                     ? (event.origin.length > 30 ? event.origin.substring(0, 30) + '...' : event.origin)
                     : (loadingLocation
@@ -258,21 +294,21 @@ const NextEventCard = ({ event, onLeaveNow, onCardPress, onStartJourney }) => {
       )}
 
       <View style={styles.leaveTimeContainer}>
-        <Icon name="notifications-active" size={20} color="#fff" />
-        <Text style={styles.leaveTime}>{timeToLeave}</Text>
+        <Icon name="notifications-active" size={20} color={getStatusColor(cardStatus)} />
+        <Text style={[styles.leaveTime, getStrongTextShadow()]}>{timeToLeave}</Text>
       </View>
 
       {isCompleted && event.arrivedOnTime === true && (
         <View style={styles.completedInfo}>
-          <Icon name="stars" size={24} color="#fff" />
-          <Text style={styles.completedText}>+50 XP earned!</Text>
+          <Icon name="stars" size={24} color={getStatusColor('success')} />
+          <Text style={[styles.completedText, getStrongTextShadow()]}>+50 XP earned!</Text>
         </View>
       )}
       {!isCompleted && (
         <View style={styles.buttonsContainer}>
           {isTimeToGo && (
             <TouchableOpacity style={styles.leaveButton} onPress={onLeaveNow}>
-              <Text style={styles.leaveButtonText}>I'm Leaving Now! 🏃</Text>
+              <Text style={[styles.leaveButtonText, getStrongTextShadow()]}>I'm Leaving Now! 🏃</Text>
             </TouchableOpacity>
           )}
           {event.location && (
@@ -281,53 +317,50 @@ const NextEventCard = ({ event, onLeaveNow, onCardPress, onStartJourney }) => {
               onPress={() => onStartJourney && onStartJourney(event)}
             >
               <Icon name="directions" size={20} color="#fff" />
-              <Text style={styles.journeyButtonText}>Start Journey</Text>
+              <Text style={[styles.journeyButtonText, getStrongTextShadow()]}>Start Journey</Text>
             </TouchableOpacity>
           )}
         </View>
       )}
-      </LinearGradient>
+      </View>
     </TouchableOpacity>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    borderRadius: 20,
-    padding: 25,
-    marginBottom: 20,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    marginBottom: Spacing.lg,
     minHeight: 280,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
   },
   urgentContainer: {
-    borderWidth: 3,
-    borderColor: '#fff',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.8)',
   },
   urgentBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    ...CommonStyles.row,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)', // Dark background for better contrast
     alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 15,
-    marginBottom: 10,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.round,
+    marginBottom: Spacing.base,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   urgentText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-    marginLeft: 5,
+    color: '#FFFFFF', // Ensure white text
+    ...Typography.micro,
+    fontWeight: Typography.weight.bold,
+    marginLeft: Spacing.xs,
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
   },
   eventDate: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.8)',
-    marginBottom: 5,
-    fontWeight: '500',
+    ...Typography.caption,
+    marginBottom: Spacing.xs,
   },
   eventTime: {
     fontSize: 32,
@@ -430,10 +463,12 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   leaveButton: {
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
     borderRadius: 20,
     padding: 15,
     alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
   },
   leaveButtonText: {
     color: '#ff6b6b',
@@ -441,14 +476,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   journeyButton: {
-    backgroundColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
     borderRadius: 20,
     padding: 15,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: 'rgba(255, 255, 255, 0.6)',
   },
   journeyButtonSmall: {
     padding: 12,

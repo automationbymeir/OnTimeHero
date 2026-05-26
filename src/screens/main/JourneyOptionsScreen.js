@@ -16,6 +16,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import GoogleMapsService from '../../services/GoogleMapsService';
 import LocationService from '../../services/LocationService';
 import moment from 'moment';
+import Theme, { Colors, Typography, Spacing, BorderRadius, CommonStyles, getTextShadow, getStrongTextShadow, getDynamicBackground, createGlassCard } from '../../styles/theme';
 
 const JourneyOptionsScreen = ({ route, navigation }) => {
   const { event } = route.params;
@@ -195,8 +196,52 @@ const JourneyOptionsScreen = ({ route, navigation }) => {
     }
   };
 
-  const handleSelectMode = (mode, routeData) => {
+  const handleSelectMode = async (mode, routeData) => {
     setSelectedMode(mode);
+    
+    // Update event with transportation mode and new travel time
+    const updatedEvent = { 
+      ...event, 
+      origin: fromUseCurrent ? 'CURRENT_LOCATION' : fromText, 
+      location: toText || event.location,
+      transportationMode: mode,
+      travelTime: routeData.duration || event.travelTime || 15
+    };
+
+    // Save the updated event data
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const localData = await AsyncStorage.getItem('localEvents');
+      if (localData) {
+        const events = JSON.parse(localData).map(e => 
+          e.id === event.id ? { ...e, ...updatedEvent } : e
+        );
+        await AsyncStorage.setItem('localEvents', JSON.stringify(events));
+      }
+      
+      // Update Firestore if available
+      try {
+        const firestore = require('@react-native-firebase/firestore').default;
+        await firestore().collection('events').doc(event.id).update({
+          transportationMode: mode,
+          travelTime: routeData.duration || event.travelTime || 15,
+          lastModified: firestore.Timestamp.now()
+        });
+      } catch (firestoreError) {
+        console.log('Could not update Firestore:', firestoreError);
+      }
+
+      // Emit event update for real-time sync only if event has valid startTime
+      if (updatedEvent.startTime) {
+        DeviceEventEmitter.emit('EVENT_ROUTE_UPDATED', updatedEvent);
+        console.log('✅ Transportation mode updated:', mode, 'Travel time:', routeData.duration);
+      } else {
+        console.log('⚠️ Skipping EVENT_ROUTE_UPDATED - event has no startTime');
+      }
+    } catch (error) {
+      console.error('Error updating transportation mode:', error);
+    }
+
     // Open in Google Maps with the selected mode
     const originParam = fromUseCurrent ? 'My+Location' : encodeURIComponent(fromText);
     const destParam = encodeURIComponent(toText || event.location);
@@ -205,7 +250,6 @@ const JourneyOptionsScreen = ({ route, navigation }) => {
 
     // Also navigate to journey tracking screen
     setTimeout(() => {
-      const updatedEvent = { ...event, origin: fromUseCurrent ? 'CURRENT_LOCATION' : fromText, location: toText || event.location };
       navigation.replace('JourneyTracking', { event: updatedEvent, mode, routeData });
     }, 1000);
   };
@@ -216,20 +260,19 @@ const JourneyOptionsScreen = ({ route, navigation }) => {
 
   // Do not block the whole screen; show inline loader later
 
+  const backgroundColors = getDynamicBackground();
+
   return (
-    <View style={styles.container}>
-      <LinearGradient
-        colors={['#667eea', '#764ba2']}
-        style={styles.header}
-      >
+    <LinearGradient colors={backgroundColors} style={styles.container}>
+      <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
         >
           <Icon name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Choose Your Route</Text>
-      </LinearGradient>
+        <Text style={[styles.headerTitle, getStrongTextShadow()]}>Choose Your Route</Text>
+      </View>
 
       <ScrollView style={styles.content}>
         <View style={styles.eventInfo}>
@@ -430,7 +473,7 @@ const JourneyOptionsScreen = ({ route, navigation }) => {
           </View>
         )}
       </ScrollView>
-    </View>
+    </LinearGradient>
   );
 };
 

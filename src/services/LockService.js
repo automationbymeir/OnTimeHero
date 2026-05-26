@@ -10,6 +10,20 @@ class LockService {
     this.appStateSubscription = null;
   }
 
+  // Helper function to safely get event time
+  getEventTime(event) {
+    if (event.startTime && typeof event.startTime.toDate === 'function') {
+      // Firestore timestamp
+      return new Date(event.startTime.toDate());
+    } else if (event.startTime) {
+      // Regular Date object or ISO string
+      return new Date(event.startTime);
+    } else {
+      console.error('Invalid event startTime:', event.startTime);
+      return new Date();
+    }
+  }
+
   async startLockMode(event, onUnlock) {
     try {
       const lockDuration = await AsyncStorage.getItem('lockDuration');
@@ -37,7 +51,7 @@ class LockService {
       );
 
       // Set timer for auto-unlock at event start time
-      const eventTime = new Date(event.startTime.toDate());
+      const eventTime = this.getEventTime(event);
       const now = new Date();
       const timeUntilEvent = eventTime - now;
 
@@ -268,6 +282,16 @@ class LockService {
           arrivedOnTime,
           wasEarly,
         });
+
+        // Emit event completion to update UI
+        const DeviceEventEmitter = require('react-native').DeviceEventEmitter;
+        DeviceEventEmitter.emit('EVENT_COMPLETED', {
+          ...this.currentEvent,
+          status: 'completed',
+          completedAt: completedAt,
+          arrivedOnTime: arrivedOnTime,
+          wasEarly: wasEarly,
+        });
       } else {
         // For local events, also update in Firestore if possible
         try {
@@ -331,20 +355,23 @@ class LockService {
         });
       }
 
-      // Award points and achievements
-      if (arrivedOnTime) {
-        console.log('🏆 Awarding points for on-time arrival');
-        const pointsAwarded = await GamificationService.awardPoints(50, 'On-time arrival');
-        await GamificationService.checkAndAwardBadges();
-        
-        console.log('🎯 Points awarded:', pointsAwarded);
-        
-        // Show achievement notification with points
-        NotificationService.showArrivalNotification(this.currentEvent, true, pointsAwarded);
-      } else {
-        console.log('⚠️ Late arrival - no points awarded');
-        NotificationService.showArrivalNotification(this.currentEvent, false, 0);
-      }
+      // Award points and achievements using the new system
+      const eventData = {
+        ...this.currentEvent,
+        status: 'completed',
+        completedAt: completedAt,
+        arrivedOnTime: arrivedOnTime,
+        wasEarly: wasEarly,
+      };
+
+      const pointsAwarded = await GamificationService.awardEventPoints(eventData);
+      await GamificationService.awardPhoneLockPoints();
+      await GamificationService.checkAchievements();
+      
+      console.log('🎯 Points awarded:', pointsAwarded);
+      
+      // Show achievement notification with points
+      NotificationService.showArrivalNotification(this.currentEvent, arrivedOnTime, pointsAwarded);
 
     } catch (error) {
       console.error('❌ Error updating event completion:', error);

@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import Theme, { Colors, Typography, Spacing, BorderRadius, CommonStyles, getTextShadow, getStrongTextShadow, getDynamicBackground, createGlassCard } from '../../styles/theme';
 
 const HelpScreen = ({ navigation }) => {
   const pointsRules = [
@@ -64,25 +65,24 @@ const HelpScreen = ({ navigation }) => {
     },
   ];
 
+  const backgroundColors = getDynamicBackground();
+
   return (
-    <View style={styles.container}>
-      <LinearGradient
-        colors={['#667eea', '#764ba2']}
-        style={styles.header}
-      >
+    <LinearGradient colors={backgroundColors} style={styles.container}>
+      <View style={styles.header}>
         <View style={styles.headerContent}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
             <Icon name="arrow-back" size={24} color="#fff" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Help & Guide</Text>
+          <Text style={[styles.headerTitle, getStrongTextShadow()]}>Help & Guide</Text>
           <View style={styles.placeholder} />
         </View>
-      </LinearGradient>
+      </View>
 
       <ScrollView style={styles.content}>
         {/* Points System */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>⭐ Points System</Text>
+          <Text style={[styles.sectionTitle, getStrongTextShadow()]}>⭐ Points System</Text>
           <Text style={styles.sectionDescription}>
             Earn points by being punctual and using app features. Points help track your progress and unlock achievements.
           </Text>
@@ -107,7 +107,7 @@ const HelpScreen = ({ navigation }) => {
 
         {/* Badges System */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🏆 Badges & Achievements</Text>
+          <Text style={[styles.sectionTitle, getStrongTextShadow()]}>🏆 Badges & Achievements</Text>
           <Text style={styles.sectionDescription}>
             Unlock badges by achieving specific goals and milestones. Each badge comes with bonus points!
           </Text>
@@ -131,7 +131,7 @@ const HelpScreen = ({ navigation }) => {
 
         {/* Tips Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>💡 Tips for Success</Text>
+          <Text style={[styles.sectionTitle, getStrongTextShadow()]}>💡 Tips for Success</Text>
           
           <View style={styles.tipsContainer}>
             <View style={styles.tipItem}>
@@ -175,16 +175,46 @@ const HelpScreen = ({ navigation }) => {
             </View>
           </View>
         </View>
+
+        {/* Developer Tools Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, getStrongTextShadow()]}>🔧 Developer Tools</Text>
+
+          <TouchableOpacity
+            style={styles.testButton}
+            onPress={() => navigation.navigate('NotificationTest')}
+          >
+            <Icon name="science" size={24} color="#fff" />
+            <View style={styles.testButtonContent}>
+              <Text style={styles.testButtonTitle}>Notification Tests</Text>
+              <Text style={styles.testButtonDescription}>
+                Test all notification types and verify they work correctly
+              </Text>
+            </View>
+            <Icon name="chevron-right" size={24} color="rgba(255,255,255,0.6)" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.testButton}
+            onPress={() => navigation.navigate('AwardTest')}
+          >
+            <Icon name="emoji-events" size={24} color="#FFD700" />
+            <View style={styles.testButtonContent}>
+              <Text style={styles.testButtonTitle}>Award & XP Tests</Text>
+              <Text style={styles.testButtonDescription}>
+                Test all achievements, XP awards, and level progression
+              </Text>
+            </View>
+            <Icon name="chevron-right" size={24} color="rgba(255,255,255,0.6)" />
+          </TouchableOpacity>
+        </View>
       </ScrollView>
-    </View>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
+  container: CommonStyles.container,
   header: {
     paddingTop: 60,
     paddingBottom: 20,
@@ -335,6 +365,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     lineHeight: 20,
+  },
+  testButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: '#667eea',
+  },
+  testButtonContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  testButtonTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 4,
+  },
+  testButtonDescription: {
+    fontSize: 14,
+    color: '#666',
   },
 });
 

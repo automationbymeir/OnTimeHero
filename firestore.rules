@@ -1,9 +1,26 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow all access for authenticated users (for development)
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+
+    // Users can only read/write their own profile
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Events belong to their creator
+    match /events/{eventId} {
+      allow read, update, delete: if request.auth != null
+        && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.userId;
+    }
+
+    // Achievements belong to their owner (Cloud Functions write via admin SDK, bypasses rules)
+    match /achievements/{achievementId} {
+      allow read: if request.auth != null
+        && request.auth.uid == resource.data.userId;
+      // Writes only via Cloud Functions (admin SDK bypasses rules)
+      allow write: if false;
     }
   }
 }

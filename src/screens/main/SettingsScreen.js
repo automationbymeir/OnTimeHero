@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  StyleSheet,
+  ImageBackground,
   TouchableOpacity,
   Switch,
-  Alert,
   ScrollView,
+  Alert,
   Modal,
   TextInput,
   Linking,
@@ -15,14 +15,30 @@ import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import GoogleMapsService from '../../services/GoogleMapsService';
+import GamificationService from '../../services/GamificationService';
 import Geolocation from 'react-native-geolocation-service';
 import { PermissionsAndroid, Platform } from 'react-native';
+import NotificationService from '../../services/NotificationService';
+import PushNotification from 'react-native-push-notification';
+import Theme, {
+  getDynamicBackground,
+  getBackgroundImage,
+  Typography,
+  Colors,
+  Spacing,
+  getSubtleTextShadow,
+  getTextShadow,
+} from '../../styles/theme';
 
 const SettingsScreen = ({ navigation }) => {
-  const [reminder1Minutes, setReminder1Minutes] = useState(30); // First reminder (get ready)
-  const [reminder2Minutes, setReminder2Minutes] = useState(15); // Second reminder (time to leave)
+  const backgroundColors = getDynamicBackground();
+  const backgroundImage = getBackgroundImage();
+
+  // Settings state - using existing functionality
+  const [reminder1Minutes, setReminder1Minutes] = useState(30);
+  const [reminder2Minutes, setReminder2Minutes] = useState(15);
   const [phoneLockEnabled, setPhoneLockEnabled] = useState(true);
-  const [lockDuration, setLockDuration] = useState(30); // minutes before event
+  const [lockDuration, setLockDuration] = useState(30);
   const [emergencyPin, setEmergencyPin] = useState('');
   const [showPinModal, setShowPinModal] = useState(false);
   const [newPin, setNewPin] = useState('');
@@ -34,6 +50,14 @@ const SettingsScreen = ({ navigation }) => {
   const [homeAddressPredictions, setHomeAddressPredictions] = useState([]);
   const [showHomeAddressPredictions, setShowHomeAddressPredictions] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [overlayEnabled, setOverlayEnabled] = useState(false);
+  const [batteryUnrestricted, setBatteryUnrestricted] = useState(false);
+
+  // New settings for the redesigned UI
+  const [voiceReminders, setVoiceReminders] = useState(true);
+  const [calendarSync, setCalendarSync] = useState(true);
+  const [darkMode, setDarkMode] = useState(false);
+  const [soundEffects, setSoundEffects] = useState(true);
 
   useEffect(() => {
     loadSettings();
@@ -46,49 +70,22 @@ const SettingsScreen = ({ navigation }) => {
       const savedPhoneLockEnabled = await AsyncStorage.getItem('phoneLockEnabled');
       const savedLockDuration = await AsyncStorage.getItem('lockDuration');
       const savedEmergencyPin = await AsyncStorage.getItem('emergencyPin');
-
-      if (savedReminder1Minutes) {
-        setReminder1Minutes(parseInt(savedReminder1Minutes));
-      }
-      if (savedReminder2Minutes) {
-        setReminder2Minutes(parseInt(savedReminder2Minutes));
-      }
-      if (savedPhoneLockEnabled) {
-        setPhoneLockEnabled(savedPhoneLockEnabled === 'true');
-      }
-      if (savedLockDuration) {
-        setLockDuration(parseInt(savedLockDuration));
-      }
-      if (savedEmergencyPin) {
-        setEmergencyPin(savedEmergencyPin);
-      }
-      
-      // Load Google Maps settings
       const savedGoogleMapsEnabled = await AsyncStorage.getItem('googleMapsEnabled');
-      if (savedGoogleMapsEnabled) {
-        setGoogleMapsEnabled(savedGoogleMapsEnabled === 'true');
-      }
-      
-      const savedHomeAddress = await GoogleMapsService.getHomeAddress();
-      if (savedHomeAddress) {
-        setHomeAddress(savedHomeAddress);
-      }
-      
-      // Load notification settings
+      const savedHomeAddress = await AsyncStorage.getItem('homeAddress');
       const savedNotificationsEnabled = await AsyncStorage.getItem('notificationsEnabled');
-      if (savedNotificationsEnabled) {
-        setNotificationsEnabled(savedNotificationsEnabled === 'true');
-      } else {
-        // Check actual notification permissions on startup
-        try {
-          const NotificationService = require('../../services/NotificationService').default;
-          const hasPermissions = await NotificationService.checkPermissions();
-          setNotificationsEnabled(hasPermissions);
-          console.log('📱 Checked notification permissions on startup:', hasPermissions);
-        } catch (error) {
-          console.error('Error checking notification permissions:', error);
-        }
-      }
+      const savedOverlayEnabled = await AsyncStorage.getItem('overlayEnabled');
+      const savedBatteryUnrestricted = await AsyncStorage.getItem('batteryUnrestricted');
+
+      if (savedReminder1Minutes) setReminder1Minutes(parseInt(savedReminder1Minutes));
+      if (savedReminder2Minutes) setReminder2Minutes(parseInt(savedReminder2Minutes));
+      if (savedPhoneLockEnabled) setPhoneLockEnabled(savedPhoneLockEnabled === 'true');
+      if (savedLockDuration) setLockDuration(parseInt(savedLockDuration));
+      if (savedEmergencyPin) setEmergencyPin(savedEmergencyPin);
+      if (savedGoogleMapsEnabled) setGoogleMapsEnabled(savedGoogleMapsEnabled === 'true');
+      if (savedHomeAddress) setHomeAddress(savedHomeAddress);
+      if (savedNotificationsEnabled) setNotificationsEnabled(savedNotificationsEnabled === 'true');
+      if (savedOverlayEnabled) setOverlayEnabled(savedOverlayEnabled === 'true');
+      if (savedBatteryUnrestricted) setBatteryUnrestricted(savedBatteryUnrestricted === 'true');
     } catch (error) {
       console.error('Error loading settings:', error);
     }
@@ -100,180 +97,44 @@ const SettingsScreen = ({ navigation }) => {
       await AsyncStorage.setItem('reminder2Minutes', reminder2Minutes.toString());
       await AsyncStorage.setItem('phoneLockEnabled', phoneLockEnabled.toString());
       await AsyncStorage.setItem('lockDuration', lockDuration.toString());
-      await GoogleMapsService.setEnabled(googleMapsEnabled);
+      await AsyncStorage.setItem('emergencyPin', emergencyPin);
+      await AsyncStorage.setItem('googleMapsEnabled', googleMapsEnabled.toString());
+      await AsyncStorage.setItem('homeAddress', homeAddress);
       await AsyncStorage.setItem('notificationsEnabled', notificationsEnabled.toString());
-      
-      Alert.alert('Settings Saved', 'Your notification and lock settings have been updated.');
+      await AsyncStorage.setItem('overlayEnabled', overlayEnabled.toString());
+      await AsyncStorage.setItem('batteryUnrestricted', batteryUnrestricted.toString());
+      console.log('✅ Settings saved successfully');
     } catch (error) {
-      console.error('Error saving settings:', error);
-      Alert.alert('Error', 'Failed to save settings. Please try again.');
-    }
-  };
-
-  const handleSavePin = async () => {
-    if (newPin.length !== 4) {
-      Alert.alert('Error', 'PIN must be exactly 4 digits');
-      return;
-    }
-
-    if (newPin !== confirmPin) {
-      Alert.alert('Error', 'PINs do not match');
-      return;
-    }
-
-    try {
-      await AsyncStorage.setItem('emergencyPin', newPin);
-      setEmergencyPin(newPin);
-      setShowPinModal(false);
-      setNewPin('');
-      setConfirmPin('');
-      Alert.alert('Success', 'Emergency PIN saved successfully!');
-    } catch (error) {
-      console.error('Error saving PIN:', error);
-      Alert.alert('Error', 'Failed to save PIN');
-    }
-  };
-
-  const requestLocationPermission = async () => {
-    if (Platform.OS === 'android') {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          {
-            title: 'Location Permission',
-            message: 'OnTimeHero needs access to your location to set your home address.',
-            buttonNeutral: 'Ask Me Later',
-            buttonNegative: 'Cancel',
-            buttonPositive: 'OK',
-          }
-        );
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
-      } catch (err) {
-        console.warn(err);
-        return false;
-      }
-    }
-    return true;
-  };
-
-  const getCurrentLocation = async () => {
-    const hasPermission = await requestLocationPermission();
-    if (!hasPermission) {
-      Alert.alert('Permission Denied', 'Location permission is required to get your current location.');
-      return;
-    }
-
-    try {
-      Geolocation.getCurrentPosition(
-        async (position) => {
-          const { latitude, longitude } = position.coords;
-          console.log('📍 Current location:', latitude, longitude);
-          
-          // Reverse geocode to get address
-          try {
-            const response = await fetch(
-              `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GoogleMapsService.apiKey}`
-            );
-            const data = await response.json();
-            
-            if (data.status === 'OK' && data.results.length > 0) {
-              const address = data.results[0].formatted_address;
-              setNewHomeAddress(address);
-              console.log('📍 Address found:', address);
-            } else {
-              Alert.alert('Error', 'Could not find address for your location.');
-            }
-          } catch (error) {
-            console.error('Reverse geocoding error:', error);
-            Alert.alert('Error', 'Failed to get address from location.');
-          }
-        },
-        (error) => {
-          console.error('Location error:', error);
-          Alert.alert('Location Error', 'Could not get your current location. Please enter your address manually.');
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
-      );
-    } catch (error) {
-      console.error('Geolocation error:', error);
-      Alert.alert('Error', 'Location services are not available.');
-    }
-  };
-
-  const handleHomeAddressChange = async (text) => {
-    setNewHomeAddress(text);
-    
-    if (text.length > 2) {
-      // Get autocomplete predictions
-      const predictions = await GoogleMapsService.getPlacePredictions(text);
-      setHomeAddressPredictions(predictions);
-      setShowHomeAddressPredictions(predictions.length > 0);
-    } else {
-      setHomeAddressPredictions([]);
-      setShowHomeAddressPredictions(false);
-    }
-  };
-
-  const handleSelectHomeAddress = (prediction) => {
-    setNewHomeAddress(prediction.description);
-    setShowHomeAddressPredictions(false);
-  };
-
-  const handleSaveHomeAddress = async () => {
-    if (!newHomeAddress.trim()) {
-      Alert.alert('Error', 'Please enter your home address');
-      return;
-    }
-
-    try {
-      await GoogleMapsService.setHomeAddress(newHomeAddress);
-      setHomeAddress(newHomeAddress);
-      setShowHomeAddressModal(false);
-      setNewHomeAddress('');
-      setShowHomeAddressPredictions(false);
-      Alert.alert('Success', 'Home address saved successfully!');
-    } catch (error) {
-      console.error('Error saving home address:', error);
-      Alert.alert('Error', 'Failed to save home address');
+      console.error('❌ Error saving settings:', error);
     }
   };
 
   const handleNotificationToggle = async (value) => {
     if (value) {
       try {
-        console.log('🔔 Requesting notification permissions...');
-
-        // Always open system settings to let user enable permissions
-        Alert.alert(
-          'Enable Notifications',
-          'OnTimeHero needs notification permissions to send you event reminders. Tap "Open Settings" to enable notifications in your device settings.',
-          [
-            { text: 'Cancel', style: 'cancel', onPress: () => setNotificationsEnabled(false) },
-            {
-              text: 'Open Settings',
-              onPress: async () => {
-                await Linking.openSettings();
-
-                // Check permissions after user returns
-                setTimeout(async () => {
-                  const NotificationService = require('../../services/NotificationService').default;
-                  const hasPermissions = await NotificationService.checkPermissions();
-                  setNotificationsEnabled(hasPermissions);
-                  if (hasPermissions) {
-                    await saveSettings();
-                    Alert.alert(
-                      '✅ Notifications Enabled!',
-                      'You will now receive event reminders based on your settings.',
-                      [{ text: 'Great!' }]
-                    );
-                  }
-                }, 1000);
-              }
-            }
-          ]
-        );
+        const granted = await requestNotificationPermission();
+        if (granted) {
+          setNotificationsEnabled(true);
+          await saveSettings();
+          Alert.alert(
+            'Notifications Enabled',
+            'You will now receive event reminders and arrival notifications.',
+            [{ text: 'OK' }]
+          );
+          console.log('🔔 Notifications enabled');
+        } else {
+          Alert.alert(
+            'Permission Required',
+            'Please enable notifications in your device settings to receive reminders.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => Linking.openSettings() }
+            ]
+          );
+          setNotificationsEnabled(false);
+        }
       } catch (error) {
-        console.error('❌ Error opening settings:', error);
+        console.error('❌ Error enabling notifications:', error);
         setNotificationsEnabled(false);
       }
     } else {
@@ -288,626 +149,1067 @@ const SettingsScreen = ({ navigation }) => {
     }
   };
 
+  const requestNotificationPermission = async () => {
+    if (Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+        {
+          title: 'Notification Permission',
+          message: 'OnTimeHero needs notification permission to send you event reminders.',
+          buttonNeutral: 'Ask Me Later',
+          buttonNegative: 'Cancel',
+          buttonPositive: 'OK',
+        }
+      );
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    }
+    return true;
+  };
+
+  const testNotification = async () => {
+    try {
+      console.log('🧪 Testing notification...');
+      
+      // Test immediate notification
+      PushNotification.localNotification({
+        channelId: 'reminders',
+        title: '🧪 Test Notification',
+        message: 'This is a test notification from OnTimeHero!',
+        playSound: true,
+        soundName: 'default',
+        vibrate: true,
+        importance: 4,
+        smallIcon: 'ic_launcher',
+        userInfo: {
+          type: 'test',
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      // Test scheduled notification (5 seconds from now)
+      const testEvent = {
+        id: 'test_event_' + Date.now(),
+        title: 'Test Event',
+        startTime: new Date(Date.now() + 5000), // 5 seconds from now
+        location: 'Test Location',
+        travelTime: 15
+      };
+
+      await NotificationService.scheduleEventNotifications(testEvent);
+      
+      Alert.alert(
+        'Test Notification Sent!',
+        'You should receive a test notification immediately and another one in 5 seconds.',
+        [{ text: 'OK' }]
+      );
+      
+      console.log('✅ Test notification sent successfully');
+    } catch (error) {
+      console.error('❌ Error testing notification:', error);
+      Alert.alert(
+        'Test Failed',
+        'Could not send test notification. Please check your notification permissions.',
+        [{ text: 'OK' }]
+      );
+    }
+  };
+
+  const openOverlaySettings = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        const NativeModules = require('react-native').NativeModules;
+        const SettingsBridge = NativeModules?.SettingsBridge;
+        if (SettingsBridge?.openOverlaySettings) {
+          await SettingsBridge.openOverlaySettings();
+          setTimeout(async () => {
+            const overlay = await SettingsBridge.isOverlayEnabled();
+            setOverlayEnabled(overlay === true);
+          }, 1000);
+        } else {
+          await Linking.openSettings();
+        }
+      } else {
+        await Linking.openSettings();
+      }
+    } catch (e) {
+      await Linking.openSettings();
+    }
+  };
+
+  const openBatteryOptimizationSettings = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        const NativeModules = require('react-native').NativeModules;
+        const SettingsBridge = NativeModules?.SettingsBridge;
+        if (SettingsBridge?.openBatteryOptimizationSettings) {
+          await SettingsBridge.openBatteryOptimizationSettings();
+          setTimeout(async () => {
+            const battery = await SettingsBridge.isBatteryOptimizationDisabled();
+            setBatteryUnrestricted(battery === true);
+          }, 1000);
+        } else {
+          await Linking.openSettings();
+        }
+      } else {
+        await Linking.openSettings();
+      }
+    } catch (e) {
+      await Linking.openSettings();
+    }
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: () => {
+            // Handle logout logic
+            console.log('User logged out');
+            navigation.navigate('Login');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'This action cannot be undone. All your data will be permanently deleted.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            // Handle account deletion
+            console.log('Account deleted');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleResetProgress = async () => {
+    Alert.alert(
+      'Reset Progress',
+      'This will permanently delete all your XP, levels, streaks, and achievements. This cannot be undone. Are you sure?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              console.log('🔄 Calling GamificationService.resetUserData()...');
+              const success = await GamificationService.resetUserData();
+
+              if (success) {
+                Alert.alert(
+                  'Success',
+                  'All progress has been reset successfully! Your XP, levels, streaks, and achievements have been cleared.',
+                  [
+                    { text: 'OK', onPress: () => {
+                      // Navigate to Dashboard to see the reset
+                      navigation.navigate('Dashboard');
+                    }}
+                  ]
+                );
+              } else {
+                Alert.alert(
+                  'Error',
+                  'Failed to reset progress. Please try again or check your internet connection.',
+                  [{ text: 'OK' }]
+                );
+              }
+            } catch (error) {
+              console.error('❌ Error in handleResetProgress:', error);
+              Alert.alert(
+                'Error',
+                `An error occurred: ${error.message}. Please try again.`,
+                [{ text: 'OK' }]
+              );
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleResetAwardsAndPoints = () => {
+    Alert.alert(
+      'Reset Awards & Points',
+      'This will reset all your points, achievements, badges, and statistics. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset All Data',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const firestore = require('@react-native-firebase/firestore').default;
+              const auth = require('@react-native-firebase/auth').default;
+              const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+              
+              const currentUser = auth().currentUser;
+              if (!currentUser) {
+                Alert.alert('Error', 'You must be logged in to reset data');
+                return;
+              }
+
+              console.log('🔄 Starting reset for user:', currentUser.uid);
+
+              // Force create/overwrite user document with reset values
+              const userDocRef = firestore().collection('users').doc(currentUser.uid);
+              await userDocRef.set({
+                xp: 0,
+                level: 1,
+                achievements: [],
+                badges: [],
+                currentStreak: 0,
+                punctualityScore: 0,
+                lastPointsUpdate: firestore.FieldValue.serverTimestamp(),
+                lastPointsReason: 'Reset by user',
+                createdAt: firestore.FieldValue.serverTimestamp(),
+              }, { merge: false }); // merge: false forces overwrite
+
+              console.log('✅ User document reset successfully');
+
+              // Clear local storage
+              await AsyncStorage.removeItem('userStats');
+              await AsyncStorage.removeItem('latestAchievement');
+              await AsyncStorage.removeItem('levelUp');
+              await AsyncStorage.removeItem('userNotifications');
+              console.log('✅ Local storage cleared');
+
+              // Clear all achievement records
+              console.log('🗑️ Clearing achievement records...');
+              const achievementsSnapshot = await firestore()
+                .collection('achievements')
+                .where('userId', '==', currentUser.uid)
+                .get();
+              
+              console.log(`🗑️ Found ${achievementsSnapshot.docs.length} achievement records to delete`);
+              
+              if (achievementsSnapshot.docs.length > 0) {
+                const batch = firestore().batch();
+                achievementsSnapshot.docs.forEach(doc => {
+                  batch.delete(doc.ref);
+                });
+                await batch.commit();
+                console.log('✅ Achievement records deleted');
+              }
+
+              // Clear XP logs
+              console.log('🗑️ Clearing XP logs...');
+              const xpLogsSnapshot = await firestore()
+                .collection('xp_logs')
+                .where('userId', '==', currentUser.uid)
+                .get();
+              
+              console.log(`🗑️ Found ${xpLogsSnapshot.docs.length} XP log records to delete`);
+              
+              if (xpLogsSnapshot.docs.length > 0) {
+                const xpBatch = firestore().batch();
+                xpLogsSnapshot.docs.forEach(doc => {
+                  xpBatch.delete(doc.ref);
+                });
+                await xpBatch.commit();
+                console.log('✅ XP log records deleted');
+              }
+
+              // Wait for Firestore to propagate
+              await new Promise(resolve => setTimeout(resolve, 3000));
+
+              // Verify the reset worked by reading the document back
+              const verifyDoc = await userDocRef.get();
+              const verifyData = verifyDoc.data();
+              console.log('🔍 Verification - User document after reset:', verifyData);
+              
+              // Double-check that all fields are properly reset
+              if (verifyData.xp !== 0 || verifyData.level !== 1 || verifyData.currentStreak !== 0) {
+                console.log('❌ Reset verification failed, retrying...');
+                await userDocRef.set({
+                  xp: 0,
+                  level: 1,
+                  achievements: [],
+                  badges: [],
+                  currentStreak: 0,
+                  punctualityScore: 0,
+                  lastPointsUpdate: firestore.FieldValue.serverTimestamp(),
+                  lastPointsReason: 'Reset by user (retry)',
+                }, { merge: false });
+                
+                // Wait again and verify
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                const retryDoc = await userDocRef.get();
+                const retryData = retryDoc.data();
+                console.log('🔍 Retry verification - User document after reset:', retryData);
+              }
+
+              // Emit multiple events to ensure dashboard gets the message
+              const DeviceEventEmitter = require('react-native').DeviceEventEmitter;
+              
+              // Get the final verified data
+              const finalDoc = await userDocRef.get();
+              const finalData = finalDoc.data();
+              console.log('🔍 Final data before emitting events:', finalData);
+              
+              const resetStats = {
+                points: finalData.xp || 0,
+                level: finalData.level || 1,
+                currentStreak: finalData.currentStreak || 0,
+                xpForNextLevel: 100,
+              };
+              
+              console.log('📡 Emitting STATS_RESET event...');
+              DeviceEventEmitter.emit('STATS_RESET');
+              
+              // Small delay between events
+              await new Promise(resolve => setTimeout(resolve, 200));
+              
+              console.log('📡 Emitting FORCE_REFRESH event...');
+              DeviceEventEmitter.emit('FORCE_REFRESH');
+              
+              // Small delay between events
+              await new Promise(resolve => setTimeout(resolve, 200));
+              
+              console.log('📡 Emitting POINTS_UPDATED event with data:', resetStats);
+              DeviceEventEmitter.emit('POINTS_UPDATED', resetStats);
+              
+              // Emit a final comprehensive event
+              console.log('📡 Emitting COMPLETE_RESET event...');
+              DeviceEventEmitter.emit('COMPLETE_RESET', resetStats);
+              
+              console.log('📡 All events emitted successfully');
+
+              Alert.alert(
+                'Success',
+                `Reset completed! Points: ${verifyData.xp}, Level: ${verifyData.level}. The dashboard should update automatically.`,
+                [
+                  { text: 'OK' },
+                  { 
+                    text: 'Force Refresh Dashboard', 
+                    onPress: () => {
+                      DeviceEventEmitter.emit('STATS_RESET');
+                      DeviceEventEmitter.emit('FORCE_REFRESH');
+                      DeviceEventEmitter.emit('POINTS_UPDATED', {
+                        points: 0,
+                        level: 1,
+                        xpForNextLevel: 100,
+                      });
+                    }
+                  }
+                ]
+              );
+              
+              console.log('✅ All awards and points data reset successfully');
+            } catch (error) {
+              console.error('❌ Error resetting awards and points:', error);
+              Alert.alert(
+                'Error',
+                `Failed to reset data: ${error.message}. Please try again.`,
+                [{ text: 'OK' }]
+              );
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const notificationOptions = [5, 10, 15, 30, 45, 60];
   const lockDurationOptions = [15, 30, 45, 60, 90, 120];
 
   return (
-    <View style={styles.container}>
+    <ImageBackground
+      source={{ uri: backgroundImage }}
+      style={{ flex: 1 }}
+      imageStyle={{ opacity: 0.3 }}
+    >
       <LinearGradient
-        colors={['#667eea', '#764ba2']}
-        style={styles.header}
+        colors={['#0ea5e9', '#0369a1', '#00172a']}
+        style={{ flex: 1 }}
       >
-        <View style={styles.headerContent}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Icon name="arrow-back" size={24} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Settings</Text>
-          <TouchableOpacity onPress={saveSettings} style={styles.saveButton}>
-            <Icon name="save" size={24} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      </LinearGradient>
-
-      <ScrollView style={styles.content}>
-        {/* Notification Settings */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🔔 Notification Settings</Text>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.switchContainer}>
-              <View style={styles.switchLabelContainer}>
-                <Text style={styles.settingLabel}>Enable notifications</Text>
-                <Text style={styles.settingDescription}>
-                  Allow the app to send you event reminders and arrival notifications
-                </Text>
-              </View>
-              <Switch
-                value={notificationsEnabled}
-                onValueChange={handleNotificationToggle}
-                trackColor={{ false: '#767577', true: '#667eea' }}
-                thumbColor={notificationsEnabled ? '#fff' : '#f4f3f4'}
-              />
-            </View>
-          </View>
-          
-          <View style={styles.settingItem}>
-            <Text style={styles.settingLabel}>First reminder (Get Ready):</Text>
-            <Text style={styles.settingDescription}>
-              Time before event to remind you to prepare
-            </Text>
-            <View style={styles.optionsContainer}>
-              {notificationOptions.map((minutes) => (
-                <TouchableOpacity
-                  key={`reminder1_${minutes}`}
-                  style={[
-                    styles.optionButton,
-                    reminder1Minutes === minutes && styles.selectedOption
-                  ]}
-                  onPress={() => setReminder1Minutes(minutes)}
-                >
-                  <Text style={[
-                    styles.optionText,
-                    reminder1Minutes === minutes && styles.selectedOptionText
-                  ]}>
-                    {minutes}m
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          <View style={styles.settingItem}>
-            <Text style={styles.settingLabel}>Second reminder (Time to Leave):</Text>
-            <Text style={styles.settingDescription}>
-              Time before event to notify you to leave
-            </Text>
-            <View style={styles.optionsContainer}>
-              {notificationOptions.map((minutes) => (
-                <TouchableOpacity
-                  key={`reminder2_${minutes}`}
-                  style={[
-                    styles.optionButton,
-                    reminder2Minutes === minutes && styles.selectedOption
-                  ]}
-                  onPress={() => setReminder2Minutes(minutes)}
-                >
-                  <Text style={[
-                    styles.optionText,
-                    reminder2Minutes === minutes && styles.selectedOptionText
-                  ]}>
-                    {minutes}m
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        </View>
-
-        {/* Phone Lock Settings */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🔒 Phone Lock Settings</Text>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.switchContainer}>
-              <Text style={styles.settingLabel}>Enable phone lock before events</Text>
-              <Switch
-                value={phoneLockEnabled}
-                onValueChange={setPhoneLockEnabled}
-                trackColor={{ false: '#767577', true: '#667eea' }}
-                thumbColor={phoneLockEnabled ? '#fff' : '#f4f3f4'}
-              />
-            </View>
-            <Text style={styles.settingDescription}>
-              When enabled, your phone will be locked before important events to help you stay focused.
-            </Text>
-          </View>
-
-          {phoneLockEnabled && (
-            <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Lock phone starting:</Text>
-              <View style={styles.optionsContainer}>
-                {lockDurationOptions.map((minutes) => (
-                  <TouchableOpacity
-                    key={minutes}
-                    style={[
-                      styles.optionButton,
-                      lockDuration === minutes && styles.selectedOption
-                    ]}
-                    onPress={() => setLockDuration(minutes)}
-                  >
-                    <Text style={[
-                      styles.optionText,
-                      lockDuration === minutes && styles.selectedOptionText
-                    ]}>
-                      {minutes}m before
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          )}
-        </View>
-
-        {/* Google Maps Integration */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🗺️ Google Maps Integration</Text>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.switchContainer}>
-              <Text style={styles.settingLabel}>Enable Google Maps travel time</Text>
-              <Switch
-                value={googleMapsEnabled}
-                onValueChange={setGoogleMapsEnabled}
-                trackColor={{ false: '#767577', true: '#667eea' }}
-                thumbColor={googleMapsEnabled ? '#fff' : '#f4f3f4'}
-              />
-            </View>
-            <Text style={styles.settingDescription}>
-              Calculate accurate travel time based on real-time traffic data
-            </Text>
-          </View>
-
-          {googleMapsEnabled && (
-            <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Home Address:</Text>
-              <TouchableOpacity
-                style={styles.pinButton}
-                onPress={() => {
-                  setNewHomeAddress(homeAddress);
-                  setShowHomeAddressModal(true);
-                }}
-              >
-                <Text style={styles.pinButtonText}>
-                  {homeAddress || 'Set your home address'}
-                </Text>
-                <Icon name="edit" size={20} color="#667eea" />
-              </TouchableOpacity>
-              <Text style={styles.settingDescription}>
-                Your starting point for calculating travel time to events
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* Emergency PIN Settings */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🔑 Emergency PIN</Text>
-          
-          <View style={styles.settingItem}>
-            <Text style={styles.settingLabel}>Emergency PIN:</Text>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: Spacing.lg, paddingBottom: Spacing.huge }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header */}
+          <View style={{ marginTop: Spacing.xl, marginBottom: Spacing.xxxl }}>
             <TouchableOpacity
-              style={styles.pinButton}
-              onPress={() => setShowPinModal(true)}
+              onPress={() => navigation.goBack()}
+              style={{ marginBottom: Spacing.lg }}
             >
-              <Text style={styles.pinButtonText}>
-                {emergencyPin ? '••••' : 'Set PIN'}
-              </Text>
-              <Icon name="edit" size={20} color="#667eea" />
+              <Icon name="arrow-back" size={28} color={Colors.text.primary} />
             </TouchableOpacity>
-            <Text style={styles.settingDescription}>
-              4-digit PIN to unlock your phone in emergency situations.
+            <Text style={[Typography.huge, getTextShadow()]}>
+              Settings
+            </Text>
+            <Text style={[Typography.body, { color: Colors.text.secondary, marginTop: Spacing.xs }]}>
+              Customize your OnTimeHero experience
             </Text>
           </View>
-        </View>
 
-        {/* Help Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>❓ Help & Information</Text>
-          
-          <TouchableOpacity 
-            style={styles.helpItem}
-            onPress={() => navigation.navigate('HelpScreen')}
-          >
-            <Icon name="help-outline" size={24} color="#667eea" />
-            <View style={styles.helpItemContent}>
-              <Text style={styles.helpItemTitle}>Points & Badges Guide</Text>
-              <Text style={styles.helpItemDescription}>
-                Learn how to earn points and unlock badges
-              </Text>
-            </View>
-            <Icon name="chevron-right" size={24} color="#ccc" />
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.helpItem}
-            onPress={() => Alert.alert('App Info', 'OnTimeHero v1.0\nBuilt with React Native & Firebase')}
-          >
-            <Icon name="info-outline" size={24} color="#667eea" />
-            <View style={styles.helpItemContent}>
-              <Text style={styles.helpItemTitle}>About OnTimeHero</Text>
-              <Text style={styles.helpItemDescription}>
-                App version and information
-              </Text>
-            </View>
-            <Icon name="chevron-right" size={24} color="#ccc" />
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-
-      {/* Emergency PIN Modal */}
-      <Modal
-        visible={showPinModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowPinModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Set Emergency PIN</Text>
-            <Text style={styles.modalDescription}>
-              Enter a 4-digit PIN for emergency phone unlock:
-            </Text>
-            
-            <TextInput
-              style={[styles.pinInput, { color: '#333' }]}
-              value={newPin}
-              onChangeText={setNewPin}
-              keyboardType="numeric"
-              maxLength={4}
-              secureTextEntry
-              placeholder="Enter PIN"
-              placeholderTextColor="#999"
-            />
-            
-            <TextInput
-              style={[styles.pinInput, { color: '#333' }]}
-              value={confirmPin}
-              onChangeText={setConfirmPin}
-              keyboardType="numeric"
-              maxLength={4}
-              secureTextEntry
-              placeholder="Confirm PIN"
-              placeholderTextColor="#999"
-            />
-            
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => {
-                  setShowPinModal(false);
-                  setNewPin('');
-                  setConfirmPin('');
+          {/* Profile Section */}
+          <View style={{ marginBottom: Spacing.xxxl }}>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Profile')}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingVertical: Spacing.md,
+              }}
+            >
+              <View
+                style={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: 32,
+                  backgroundColor: Colors.status.info + '40',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  marginRight: Spacing.md,
                 }}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[styles.modalButton, styles.saveButton]}
-                onPress={handleSavePin}
-              >
-                <Text style={styles.saveButtonText}>Save</Text>
-              </TouchableOpacity>
-            </View>
+                <Icon name="person" size={32} color={Colors.text.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[Typography.h3, getSubtleTextShadow()]}>
+                  Meir
+                </Text>
+                <Text style={[Typography.body, { color: Colors.text.secondary }]}>
+                  View and edit profile
+                </Text>
+              </View>
+              <Icon name="chevron-right" size={24} color={Colors.text.tertiary} />
+            </TouchableOpacity>
           </View>
-        </View>
-      </Modal>
 
-      {/* Home Address Modal */}
-      <Modal
-        visible={showHomeAddressModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowHomeAddressModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Set Home Address</Text>
-            <Text style={styles.modalDescription}>
-              Enter your home address for travel time calculations:
+          {/* Notifications Section */}
+          <View style={{ marginBottom: Spacing.xxxl }}>
+            <Text style={[Typography.h4, getSubtleTextShadow(), { marginBottom: Spacing.lg }]}>
+              Notifications
             </Text>
-            
-            <View>
-              <TouchableOpacity
-                style={styles.currentLocationButton}
-                onPress={getCurrentLocation}
-              >
-                <Icon name="my-location" size={20} color="#667eea" />
-                <Text style={styles.currentLocationButtonText}>Use Current Location</Text>
-              </TouchableOpacity>
-              
+
+            <SettingToggle
+              icon="notifications"
+              label="Push Notifications"
+              description="Get reminded about upcoming events"
+              value={notificationsEnabled}
+              onValueChange={handleNotificationToggle}
+            />
+
+            <SettingItem
+              icon="bug-report"
+              label="Test Notifications"
+              description="Send a test notification to verify they're working"
+              onPress={testNotification}
+            />
+
+            <SettingToggle
+              icon="record-voice-over"
+              label="Voice Reminders"
+              description="Hear audio reminders before events"
+              value={voiceReminders}
+              onValueChange={setVoiceReminders}
+            />
+
+            <SettingToggle
+              icon="volume-up"
+              label="Sound Effects"
+              description="Play sounds for actions and achievements"
+              value={soundEffects}
+              onValueChange={setSoundEffects}
+            />
+          </View>
+
+          {/* Reminder Settings */}
+          <View style={{ marginBottom: Spacing.xxxl }}>
+            <Text style={[Typography.h4, getSubtleTextShadow(), { marginBottom: Spacing.lg }]}>
+              Reminder Settings
+            </Text>
+
+            <SettingItem
+              icon="schedule"
+              label="Get Ready Reminder"
+              description={`${reminder1Minutes} minutes before event`}
+              onPress={() => {
+                Alert.alert(
+                  'Get Ready Reminder',
+                  'Choose when to remind you to prepare:',
+                  notificationOptions.map(minutes => ({
+                    text: `${minutes} min`,
+                    onPress: () => {
+                      setReminder1Minutes(minutes);
+                      saveSettings();
+                    }
+                  }))
+                );
+              }}
+            />
+
+            <SettingItem
+              icon="directions-run"
+              label="Leave Now Reminder"
+              description={`${reminder2Minutes} minutes before event`}
+              onPress={() => {
+                Alert.alert(
+                  'Leave Now Reminder',
+                  'Choose when to remind you to leave:',
+                  notificationOptions.map(minutes => ({
+                    text: `${minutes} min`,
+                    onPress: () => {
+                      setReminder2Minutes(minutes);
+                      saveSettings();
+                    }
+                  }))
+                );
+              }}
+            />
+          </View>
+
+          {/* Calendar & Sync Section */}
+          <View style={{ marginBottom: Spacing.xxxl }}>
+            <Text style={[Typography.h4, getSubtleTextShadow(), { marginBottom: Spacing.lg }]}>
+              Calendar & Sync
+            </Text>
+
+            <SettingToggle
+              icon="sync"
+              label="Google Calendar Sync"
+              description="Automatically sync with Google Calendar"
+              value={calendarSync}
+              onValueChange={setCalendarSync}
+            />
+
+            <SettingItem
+              icon="calendar-today"
+              label="Manage Calendars"
+              description="Choose which calendars to display"
+              onPress={() => navigation.navigate('Calendar')}
+            />
+
+            <SettingItem
+              icon="refresh"
+              label="Sync Now"
+              description="Manually sync your events"
+              onPress={() => {
+                Alert.alert('Sync', 'Syncing your events...');
+                // Add actual sync logic here
+              }}
+            />
+          </View>
+
+          {/* Phone Lock Settings */}
+          <View style={{ marginBottom: Spacing.xxxl }}>
+            <Text style={[Typography.h4, getSubtleTextShadow(), { marginBottom: Spacing.lg }]}>
+              Phone Lock
+            </Text>
+
+            <SettingToggle
+              icon="lock"
+              label="Enable Phone Lock"
+              description="Lock phone during travel time"
+              value={phoneLockEnabled}
+              onValueChange={(value) => {
+                setPhoneLockEnabled(value);
+                saveSettings();
+              }}
+            />
+
+            <SettingItem
+              icon="timer"
+              label="Lock Duration"
+              description={`${lockDuration} minutes before event`}
+              onPress={() => {
+                Alert.alert(
+                  'Lock Duration',
+                  'How long before event to lock phone:',
+                  lockDurationOptions.map(minutes => ({
+                    text: `${minutes} min`,
+                    onPress: () => {
+                      setLockDuration(minutes);
+                      saveSettings();
+                    }
+                  }))
+                );
+              }}
+            />
+
+            <SettingItem
+              icon="security"
+              label="Emergency PIN"
+              description={emergencyPin ? 'PIN set' : 'Set emergency PIN'}
+              onPress={() => setShowPinModal(true)}
+            />
+          </View>
+
+          {/* Location Settings */}
+          <View style={{ marginBottom: Spacing.xxxl }}>
+            <Text style={[Typography.h4, getSubtleTextShadow(), { marginBottom: Spacing.lg }]}>
+              Location
+            </Text>
+
+            <SettingToggle
+              icon="my-location"
+              label="Use Current Location"
+              description="Automatically use your current location"
+              value={googleMapsEnabled}
+              onValueChange={(value) => {
+                setGoogleMapsEnabled(value);
+                saveSettings();
+              }}
+            />
+
+            <SettingItem
+              icon="home"
+              label="Home Address"
+              description={homeAddress || 'Set your home address'}
+              onPress={() => setShowHomeAddressModal(true)}
+            />
+          </View>
+
+          {/* System Permissions */}
+          <View style={{ marginBottom: Spacing.xxxl }}>
+            <Text style={[Typography.h4, getSubtleTextShadow(), { marginBottom: Spacing.lg }]}>
+              System Permissions
+            </Text>
+
+            <SettingItem
+              icon="picture-in-picture"
+              label="Display Over Other Apps"
+              description="Required for full-screen alerts"
+              onPress={openOverlaySettings}
+              iconColor={overlayEnabled ? Colors.status.success : Colors.status.warning}
+            />
+
+            <SettingItem
+              icon="battery-charging-full"
+              label="Battery Optimization"
+              description="Ensure notifications work properly"
+              onPress={openBatteryOptimizationSettings}
+              iconColor={batteryUnrestricted ? Colors.status.success : Colors.status.warning}
+            />
+          </View>
+
+          {/* Data & Privacy Section */}
+          <View style={{ marginBottom: Spacing.xxxl }}>
+            <Text style={[Typography.h4, getSubtleTextShadow(), { marginBottom: Spacing.lg }]}>
+              Data & Privacy
+            </Text>
+
+            <SettingItem
+              icon="cloud-upload"
+              label="Export Data"
+              description="Download all your data"
+              onPress={() => {
+                Alert.alert('Export Data', 'Feature coming soon!');
+              }}
+            />
+
+            <SettingItem
+              icon="refresh"
+              label="Reset Awards & Points"
+              description="Clear all achievements and statistics"
+              onPress={handleResetAwardsAndPoints}
+              iconColor={Colors.status.warning}
+            />
+
+            <SettingItem
+              icon="privacy-tip"
+              label="Privacy Policy"
+              description="Read our privacy policy"
+              onPress={() => {
+                Alert.alert('Privacy Policy', 'Feature coming soon!');
+              }}
+            />
+
+            <SettingItem
+              icon="description"
+              label="Terms of Service"
+              description="View terms and conditions"
+              onPress={() => {
+                Alert.alert('Terms of Service', 'Feature coming soon!');
+              }}
+            />
+          </View>
+
+          {/* About Section */}
+          <View style={{ marginBottom: Spacing.xxxl }}>
+            <Text style={[Typography.h4, getSubtleTextShadow(), { marginBottom: Spacing.lg }]}>
+              About
+            </Text>
+
+            <SettingItem
+              icon="info"
+              label="App Version"
+              description="1.0.0 (Beta)"
+              onPress={() => {
+                Alert.alert('App Version', 'OnTimeHero v1.0.0 (Beta)');
+              }}
+            />
+
+            <SettingItem
+              icon="star"
+              label="Rate OnTimeHero"
+              description="Show us some love on the App Store"
+              onPress={() => {
+                Alert.alert('Rate App', 'Feature coming soon!');
+              }}
+            />
+
+            <SettingItem
+              icon="feedback"
+              label="Send Feedback"
+              description="Help us improve the app"
+              onPress={() => {
+                Alert.alert('Send Feedback', 'Feature coming soon!');
+              }}
+            />
+          </View>
+
+          {/* Account Section */}
+          <View style={{ marginBottom: Spacing.xxxl }}>
+            <Text style={[Typography.h4, getSubtleTextShadow(), { marginBottom: Spacing.lg }]}>
+              Account
+            </Text>
+
+            <SettingItem
+              icon="logout"
+              label="Logout"
+              description="Sign out of your account"
+              onPress={handleLogout}
+              iconColor={Colors.status.warning}
+            />
+
+            <SettingItem
+              icon="delete-forever"
+              label="Delete Account"
+              description="Permanently delete your account and data"
+              onPress={handleDeleteAccount}
+              iconColor={Colors.status.danger}
+            />
+
+            <SettingItem
+              icon="refresh"
+              label="Reset Progress"
+              description="Reset all XP, levels, streaks, and achievements"
+              onPress={handleResetProgress}
+              iconColor={Colors.status.warning}
+            />
+          </View>
+
+          {/* Footer */}
+          <View style={{ alignItems: 'center', paddingVertical: Spacing.xl }}>
+            <Text style={[Typography.caption, { color: Colors.text.tertiary }]}>
+              Made with ❤️ for punctuality heroes
+            </Text>
+            <Text style={[Typography.small, { color: Colors.text.hint, marginTop: Spacing.xs }]}>
+              © 2025 OnTimeHero
+            </Text>
+          </View>
+        </ScrollView>
+
+        {/* Emergency PIN Modal */}
+        <Modal
+          visible={showPinModal}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowPinModal(false)}
+        >
+          <View style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}>
+            <View style={{
+              backgroundColor: '#fff',
+              borderRadius: 15,
+              padding: 20,
+              width: '90%',
+              maxWidth: 400,
+            }}>
+              <Text style={{
+                fontSize: 20,
+                fontWeight: 'bold',
+                color: '#333',
+                marginBottom: 10,
+                textAlign: 'center',
+              }}>
+                Set Emergency PIN
+              </Text>
+              <Text style={{
+                fontSize: 14,
+                color: '#666',
+                marginBottom: 20,
+                textAlign: 'center',
+              }}>
+                Enter a 4-digit PIN for emergency access
+              </Text>
               <TextInput
-                style={[styles.pinInput, { minHeight: 60, color: '#333' }]}
-                value={newHomeAddress}
-                onChangeText={handleHomeAddressChange}
-                placeholder="123 Main St, City, State ZIP"
-                placeholderTextColor="#999"
-                multiline
-              />
-              {showHomeAddressPredictions && homeAddressPredictions.length > 0 && (
-                <View style={styles.predictionsContainer}>
-                  {homeAddressPredictions.map((prediction, index) => (
-                    <TouchableOpacity
-                      key={prediction.placeId}
-                      style={styles.predictionItem}
-                      onPress={() => handleSelectHomeAddress(prediction)}
-                    >
-                      <Icon name="location-on" size={20} color="#667eea" />
-                      <View style={styles.predictionTextContainer}>
-                        <Text style={styles.predictionMainText}>
-                          {prediction.mainText}
-                        </Text>
-                        <Text style={styles.predictionSecondaryText}>
-                          {prediction.secondaryText}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-            </View>
-            
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => {
-                  setShowHomeAddressModal(false);
-                  setNewHomeAddress('');
+                style={{
+                  borderWidth: 1,
+                  borderColor: '#ddd',
+                  borderRadius: 8,
+                  padding: 15,
+                  fontSize: 18,
+                  textAlign: 'center',
+                  marginBottom: 15,
+                  backgroundColor: '#f9f9f9',
                 }}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[styles.modalButton, styles.saveButton]}
-                onPress={handleSaveHomeAddress}
-              >
-                <Text style={styles.saveButtonText}>Save</Text>
-              </TouchableOpacity>
+                placeholder="Enter PIN"
+                value={newPin}
+                onChangeText={setNewPin}
+                keyboardType="numeric"
+                maxLength={4}
+                secureTextEntry
+              />
+              <View style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                marginTop: 10,
+              }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    padding: 15,
+                    borderRadius: 8,
+                    backgroundColor: '#f0f0f0',
+                    marginRight: 10,
+                    alignItems: 'center',
+                  }}
+                  onPress={() => setShowPinModal(false)}
+                >
+                  <Text style={{ color: '#333', fontWeight: '600' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    padding: 15,
+                    borderRadius: 8,
+                    backgroundColor: '#667eea',
+                    marginLeft: 10,
+                    alignItems: 'center',
+                  }}
+                  onPress={() => {
+                    if (newPin.length === 4) {
+                      setEmergencyPin(newPin);
+                      setNewPin('');
+                      setShowPinModal(false);
+                      saveSettings();
+                      Alert.alert('Success', 'Emergency PIN set successfully!');
+                    } else {
+                      Alert.alert('Error', 'Please enter a 4-digit PIN');
+                    }
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>Save</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
-    </View>
+        </Modal>
+
+        {/* Home Address Modal */}
+        <Modal
+          visible={showHomeAddressModal}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowHomeAddressModal(false)}
+        >
+          <View style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}>
+            <View style={{
+              backgroundColor: '#fff',
+              borderRadius: 15,
+              padding: 20,
+              width: '90%',
+              maxWidth: 400,
+            }}>
+              <Text style={{
+                fontSize: 20,
+                fontWeight: 'bold',
+                color: '#333',
+                marginBottom: 10,
+                textAlign: 'center',
+              }}>
+                Set Home Address
+              </Text>
+              <Text style={{
+                fontSize: 14,
+                color: '#666',
+                marginBottom: 20,
+                textAlign: 'center',
+              }}>
+                Enter your home address for better travel calculations
+              </Text>
+              <TextInput
+                style={{
+                  borderWidth: 1,
+                  borderColor: '#ddd',
+                  borderRadius: 8,
+                  padding: 15,
+                  fontSize: 16,
+                  marginBottom: 15,
+                  backgroundColor: '#f9f9f9',
+                }}
+                placeholder="Enter home address"
+                value={newHomeAddress}
+                onChangeText={setNewHomeAddress}
+              />
+              <View style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                marginTop: 10,
+              }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    padding: 15,
+                    borderRadius: 8,
+                    backgroundColor: '#f0f0f0',
+                    marginRight: 10,
+                    alignItems: 'center',
+                  }}
+                  onPress={() => setShowHomeAddressModal(false)}
+                >
+                  <Text style={{ color: '#333', fontWeight: '600' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    padding: 15,
+                    borderRadius: 8,
+                    backgroundColor: '#667eea',
+                    marginLeft: 10,
+                    alignItems: 'center',
+                  }}
+                  onPress={() => {
+                    if (newHomeAddress.trim()) {
+                      setHomeAddress(newHomeAddress);
+                      setNewHomeAddress('');
+                      setShowHomeAddressModal(false);
+                      saveSettings();
+                      Alert.alert('Success', 'Home address set successfully!');
+                    } else {
+                      Alert.alert('Error', 'Please enter a valid address');
+                    }
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      </LinearGradient>
+    </ImageBackground>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  header: {
-    paddingTop: 60,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  backButton: {
-    padding: 8,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  saveButton: {
-    padding: 8,
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-  },
-  section: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15,
-  },
-  settingItem: {
-    marginBottom: 20,
-  },
-  settingLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 10,
-  },
-  settingDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 5,
-    lineHeight: 20,
-  },
-  switchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  switchLabelContainer: {
-    flex: 1,
-    marginRight: 15,
-  },
-  optionsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  optionButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    backgroundColor: '#fff',
-  },
-  selectedOption: {
-    backgroundColor: '#667eea',
-    borderColor: '#667eea',
-  },
-  optionText: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '500',
-  },
-  selectedOptionText: {
-    color: '#fff',
-  },
-  helpItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  helpItemContent: {
-    flex: 1,
-    marginLeft: 15,
-  },
-  helpItemTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  helpItemDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 2,
-  },
-  // PIN Modal Styles
-  pinButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#fff',
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ddd',
-  },
-  pinButtonText: {
-    fontSize: 16,
-    color: '#333',
-    fontWeight: '500',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 15,
-    padding: 20,
-    width: '90%',
-    maxWidth: 400,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  modalDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  pinInput: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 15,
-    fontSize: 18,
-    textAlign: 'center',
-    marginBottom: 15,
-    backgroundColor: '#f9f9f9',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 10,
-  },
-  modalButton: {
-    flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginHorizontal: 5,
-  },
-  cancelButton: {
-    backgroundColor: '#f0f0f0',
-  },
-  saveButton: {
-    backgroundColor: '#667eea',
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  saveButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  // Autocomplete styles for home address
-  predictionsContainer: {
-    backgroundColor: '#f8f8f8',
-    borderRadius: 8,
-    marginTop: 5,
-    maxHeight: 200,
-    borderWidth: 1,
-    borderColor: '#ddd',
-  },
-  predictionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  predictionTextContainer: {
-    marginLeft: 10,
-    flex: 1,
-  },
-  predictionMainText: {
-    color: '#333',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  predictionSecondaryText: {
-    color: '#666',
-    fontSize: 14,
-    marginTop: 2,
-  },
-  currentLocationButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f0f8ff',
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#667eea',
-  },
-  currentLocationButtonText: {
-    color: '#667eea',
-    fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-});
+// Reusable Setting Toggle Component
+const SettingToggle = ({
+  icon,
+  label,
+  description,
+  value,
+  onValueChange,
+  disabled = false,
+}) => (
+  <View
+    style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: Spacing.md,
+      opacity: disabled ? 0.5 : 1,
+    }}
+  >
+    <View
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: Colors.text.primary + '10',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: Spacing.md,
+      }}
+    >
+      <Icon name={icon} size={20} color={Colors.text.primary} />
+    </View>
+    <View style={{ flex: 1 }}>
+      <Text style={[Typography.bodyLarge, getSubtleTextShadow()]}>
+        {label}
+      </Text>
+      <Text style={[Typography.caption, { color: Colors.text.tertiary, marginTop: 2 }]}>
+        {description}
+      </Text>
+    </View>
+    <Switch
+      value={value}
+      onValueChange={onValueChange}
+      disabled={disabled}
+      trackColor={{
+        false: Colors.text.primary + '20',
+        true: Colors.status.success + '60',
+      }}
+      thumbColor={value ? Colors.status.success : Colors.text.secondary}
+      ios_backgroundColor={Colors.text.primary + '20'}
+    />
+  </View>
+);
+
+// Reusable Setting Item Component
+const SettingItem = ({
+  icon,
+  label,
+  description,
+  onPress,
+  iconColor = Colors.text.primary,
+}) => (
+  <TouchableOpacity
+    onPress={onPress}
+    style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: Spacing.md,
+    }}
+  >
+    <View
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: Colors.text.primary + '10',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: Spacing.md,
+      }}
+    >
+      <Icon name={icon} size={20} color={iconColor} />
+    </View>
+    <View style={{ flex: 1 }}>
+      <Text style={[Typography.bodyLarge, getSubtleTextShadow()]}>
+        {label}
+      </Text>
+      <Text style={[Typography.caption, { color: Colors.text.tertiary, marginTop: 2 }]}>
+        {description}
+      </Text>
+    </View>
+    <Icon name="chevron-right" size={24} color={Colors.text.tertiary} />
+  </TouchableOpacity>
+);
 
 export default SettingsScreen;
-

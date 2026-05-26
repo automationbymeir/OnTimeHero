@@ -18,6 +18,7 @@ import moment from 'moment';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NotificationService from '../../services/NotificationService';
 import GoogleMapsService from '../../services/GoogleMapsService';
+import Theme, { Colors, Typography, Spacing, BorderRadius, CommonStyles, getTextShadow, getStrongTextShadow, getDynamicBackground, createGlassCard } from '../../styles/theme';
 // import DatePicker from 'react-native-date-picker'; // Temporarily disabled due to linking issues
 
 const AddEventScreen = ({ navigation, route }) => {
@@ -43,6 +44,27 @@ const AddEventScreen = ({ navigation, route }) => {
   const [locationPredictions, setLocationPredictions] = useState([]);
   const [showLocationPredictions, setShowLocationPredictions] = useState(false);
   const [calculatedTravelTime, setCalculatedTravelTime] = useState(null);
+  const [userLocation, setUserLocation] = useState(null);
+
+  // Get user location for location-based search
+  useEffect(() => {
+    const getLocation = async () => {
+      try {
+        const LocationService = require('../../services/LocationService').default;
+        const hasPermission = await LocationService.requestLocationPermission();
+        if (hasPermission) {
+          const location = await LocationService.getCurrentLocation();
+          if (location) {
+            setUserLocation(location);
+            console.log('📍 User location set for predictions:', location);
+          }
+        }
+      } catch (error) {
+        console.log('Could not get user location for predictions:', error);
+      }
+    };
+    getLocation();
+  }, []);
 
   const handleSaveEvent = async () => {
     console.log('🚀 Starting event save process...');
@@ -211,6 +233,13 @@ const AddEventScreen = ({ navigation, route }) => {
       console.log('✅ Event saved to local storage successfully');
       
       // Schedule notifications for the event
+      console.log('📲 About to schedule notifications with event data:', {
+        id: localEventData.id,
+        title: localEventData.title,
+        startTime: localEventData.startTime,
+        travelTime: localEventData.travelTime,
+        location: localEventData.location
+      });
       await NotificationService.scheduleEventNotifications(localEventData);
       console.log('✅ Notifications scheduled for event');
       
@@ -449,7 +478,7 @@ const AddEventScreen = ({ navigation, route }) => {
     
     if (text.length > 2) {
       // Get autocomplete predictions
-      const predictions = await GoogleMapsService.getPlacePredictions(text);
+      const predictions = await GoogleMapsService.getPlacePredictions(text, userLocation);
       setLocationPredictions(predictions);
       setShowLocationPredictions(predictions.length > 0);
     } else {
@@ -461,7 +490,7 @@ const AddEventScreen = ({ navigation, route }) => {
   const handleFromChange = async (text) => {
     setFromText(text);
     if (text.length > 2) {
-      const predictions = await GoogleMapsService.getPlacePredictions(text);
+      const predictions = await GoogleMapsService.getPlacePredictions(text, userLocation);
       setFromPredictions(predictions);
       setShowFromPredictions(predictions.length > 0);
     } else {
@@ -500,9 +529,11 @@ const AddEventScreen = ({ navigation, route }) => {
 
   // Date and time confirmation functions are now handled inline in the modal components
 
+  const backgroundColors = getDynamicBackground();
+
   return (
     <LinearGradient
-      colors={['#667eea', '#764ba2']}
+      colors={backgroundColors}
       style={styles.container}
     >
       <View style={styles.header}>
@@ -512,129 +543,147 @@ const AddEventScreen = ({ navigation, route }) => {
         >
           <Icon name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Add Event</Text>
+        <Text style={[styles.headerTitle, getStrongTextShadow()]}>Add Event</Text>
       </View>
 
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.form}>
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Event Title *</Text>
+            <Text style={[styles.label, getStrongTextShadow()]}>Event Title *</Text>
             <TextInput
               style={styles.input}
               value={title}
               onChangeText={setTitle}
               placeholder="Enter event title"
-              placeholderTextColor="rgba(255,255,255,0.6)"
+              placeholderTextColor="rgba(255,255,255,0.8)"
             />
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Description</Text>
+            <Text style={[styles.label, getStrongTextShadow()]}>Description</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
               value={description}
               onChangeText={setDescription}
               placeholder="Enter event description"
-              placeholderTextColor="rgba(255,255,255,0.6)"
+              placeholderTextColor="rgba(255,255,255,0.8)"
               multiline
               numberOfLines={3}
             />
           </View>
 
-          {/* Route Builder */}
+          {/* From/To Fields */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>From</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-              <TouchableOpacity onPress={() => setFromUseCurrent(true)} style={[styles.toggleChip, fromUseCurrent && styles.toggleChipActive]}>
-                <Icon name="my-location" size={16} color="#fff" />
-                <Text style={styles.toggleChipText}>Current location</Text>
+            <Text style={[styles.label, getStrongTextShadow()]}>From (Origin)</Text>
+            <View style={styles.fromToToggle}>
+              <TouchableOpacity
+                style={[styles.toggleButton, fromUseCurrent && styles.toggleButtonActive]}
+                onPress={() => setFromUseCurrent(true)}
+              >
+                <Text style={[styles.toggleButtonText, fromUseCurrent && styles.toggleButtonTextActive]}>
+                  Current Location
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setFromUseCurrent(false)} style={[styles.toggleChip, !fromUseCurrent && styles.toggleChipActive]}>
-                <Icon name="edit-location" size={16} color="#fff" />
-                <Text style={styles.toggleChipText}>Choose address</Text>
+              <TouchableOpacity
+                style={[styles.toggleButton, !fromUseCurrent && styles.toggleButtonActive]}
+                onPress={() => setFromUseCurrent(false)}
+              >
+                <Text style={[styles.toggleButtonText, !fromUseCurrent && styles.toggleButtonTextActive]}>
+                  Custom
+                </Text>
               </TouchableOpacity>
             </View>
             {!fromUseCurrent && (
-              <>
+              <View style={styles.inputContainer}>
                 <TextInput
                   style={styles.input}
                   value={fromText}
                   onChangeText={handleFromChange}
-                  placeholder="Search origin address"
-                  placeholderTextColor="rgba(255,255,255,0.6)"
+                  placeholder="Enter origin address"
+                  placeholderTextColor="rgba(255,255,255,0.8)"
                 />
                 {showFromPredictions && fromPredictions.length > 0 && (
                   <View style={styles.predictionsContainer}>
-                    {fromPredictions.map(prediction => (
-                      <TouchableOpacity key={prediction.placeId} style={styles.predictionItem} onPress={() => handleSelectFrom(prediction)}>
+                    {fromPredictions.map((prediction) => (
+                      <TouchableOpacity
+                        key={prediction.placeId}
+                        style={styles.predictionItem}
+                        onPress={() => handleSelectFrom(prediction)}
+                      >
                         <Icon name="location-on" size={20} color="rgba(255,255,255,0.8)" />
                         <View style={styles.predictionTextContainer}>
-                          <Text style={styles.predictionMainText}>{prediction.mainText}</Text>
-                          <Text style={styles.predictionSecondaryText}>{prediction.secondaryText}</Text>
+                          <Text style={styles.predictionMainText}>
+                            {prediction.mainText}
+                          </Text>
+                          <Text style={styles.predictionSecondaryText}>
+                            {prediction.secondaryText}
+                          </Text>
                         </View>
                       </TouchableOpacity>
                     ))}
                   </View>
                 )}
-              </>
+              </View>
             )}
           </View>
 
-               <View style={styles.inputGroup}>
-                 <Text style={styles.label}>To</Text>
-                 <TextInput
-                   style={styles.input}
-                   value={location}
-                   onChangeText={handleLocationChange}
-                   placeholder="Enter destination"
-                   placeholderTextColor="rgba(255,255,255,0.6)"
-                 />
-                 {showLocationPredictions && locationPredictions.length > 0 && (
-                   <View style={styles.predictionsContainer}>
-                     {locationPredictions.map((prediction, index) => (
-                       <TouchableOpacity
-                         key={prediction.placeId}
-                         style={styles.predictionItem}
-                         onPress={() => handleSelectLocation(prediction)}
-                       >
-                         <Icon name="location-on" size={20} color="rgba(255,255,255,0.8)" />
-                         <View style={styles.predictionTextContainer}>
-                           <Text style={styles.predictionMainText}>
-                             {prediction.mainText}
-                           </Text>
-                           <Text style={styles.predictionSecondaryText}>
-                             {prediction.secondaryText}
-                           </Text>
-                         </View>
-                       </TouchableOpacity>
-                     ))}
-                   </View>
-                 )}
-                 {calculatedTravelTime && (
-                   <View style={styles.travelTimeInfo}>
-                     <Icon name="directions-car" size={16} color="rgba(255,255,255,0.8)" />
-                     <Text style={styles.travelTimeText}>
-                       Estimated travel time: {calculatedTravelTime} min
-                     </Text>
-                   </View>
-                 )}
-               </View>
+          <View style={styles.inputGroup}>
+            <Text style={[styles.label, getStrongTextShadow()]}>To (Destination)</Text>
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.input}
+                value={location}
+                onChangeText={handleLocationChange}
+                placeholder="Enter destination"
+                placeholderTextColor="rgba(255,255,255,0.8)"
+              />
+              {showLocationPredictions && locationPredictions.length > 0 && (
+                <View style={styles.predictionsContainer}>
+                  {locationPredictions.map((prediction) => (
+                    <TouchableOpacity
+                      key={prediction.placeId}
+                      style={styles.predictionItem}
+                      onPress={() => handleSelectLocation(prediction)}
+                    >
+                      <Icon name="location-on" size={20} color="rgba(255,255,255,0.8)" />
+                      <View style={styles.predictionTextContainer}>
+                        <Text style={styles.predictionMainText}>
+                          {prediction.mainText}
+                        </Text>
+                        <Text style={styles.predictionSecondaryText}>
+                          {prediction.secondaryText}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+            {calculatedTravelTime && (
+              <View style={styles.travelTimeInfo}>
+                <Icon name="directions-car" size={16} color="rgba(255,255,255,0.8)" />
+                <Text style={styles.travelTimeText}>
+                  Estimated travel time: {calculatedTravelTime} min
+                </Text>
+              </View>
+            )}
+          </View>
 
           <View style={styles.row}>
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Date *</Text>
+              <Text style={[styles.label, getStrongTextShadow()]}>Date *</Text>
               <TouchableOpacity style={[styles.input, styles.clickableInput]} onPress={handleDatePress}>
                 <Text style={styles.inputText}>{date || moment().format('YYYY-MM-DD')}</Text>
-                <Icon name="calendar-today" size={20} color="rgba(255,255,255,0.6)" />
+                <Icon name="calendar-today" size={20} color="rgba(255,255,255,0.8)" />
               </TouchableOpacity>
             </View>
 
                  <View style={[styles.inputGroup, styles.halfWidth]}>
-                   <Text style={styles.label}>Time *</Text>
+                   <Text style={[styles.label, getStrongTextShadow()]}>Time *</Text>
                    <View style={styles.timeInputContainer}>
                      <TouchableOpacity style={[styles.input, styles.clickableInput]} onPress={handleTimePress}>
                        <Text style={styles.inputText}>{moment(time, 'HH:mm').format('h:mm A')}</Text>
-                       <Icon name="access-time" size={20} color="rgba(255,255,255,0.6)" />
+                       <Icon name="access-time" size={20} color="rgba(255,255,255,0.8)" />
                      </TouchableOpacity>
                    </View>
                  </View>
@@ -669,7 +718,9 @@ const AddEventScreen = ({ navigation, route }) => {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Select Date</Text>
             <View style={styles.dateOptions}>
-              {[0, 1, 2, 3, 4, 5, 6, 7].map(days => {
+              {/* Quick options for next 7 days */}
+              <Text style={styles.dateSectionTitle}>Quick Select</Text>
+              {[0, 1, 2, 3, 4, 5, 6].map(days => {
                 const optionDate = moment().add(days, 'days');
                 const isSelected = moment(date, 'YYYY-MM-DD').format('YYYY-MM-DD') === optionDate.format('YYYY-MM-DD');
                 return (
@@ -690,6 +741,47 @@ const AddEventScreen = ({ navigation, route }) => {
                   </TouchableOpacity>
                 );
               })}
+              
+              {/* Custom date picker */}
+              <Text style={styles.dateSectionTitle}>Custom Date</Text>
+              <View style={styles.customDateContainer}>
+                <Text style={styles.customDateLabel}>Select any date:</Text>
+                <View style={styles.dateInputRow}>
+                  <TextInput
+                    style={styles.dateInput}
+                    value={date}
+                    onChangeText={(text) => {
+                      // Validate date format
+                      if (moment(text, 'YYYY-MM-DD', true).isValid()) {
+                        setDate(text);
+                      }
+                    }}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="rgba(255,255,255,0.6)"
+                    keyboardType="numeric"
+                  />
+                  <TouchableOpacity
+                    style={styles.todayButton}
+                    onPress={() => {
+                      setDate(moment().format('YYYY-MM-DD'));
+                    }}
+                  >
+                    <Text style={styles.todayButtonText}>Today</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  style={styles.confirmDateButton}
+                  onPress={() => {
+                    if (moment(date, 'YYYY-MM-DD', true).isValid()) {
+                      setShowDatePicker(false);
+                    } else {
+                      Alert.alert('Invalid Date', 'Please enter a valid date in YYYY-MM-DD format');
+                    }
+                  }}
+                >
+                  <Text style={styles.confirmDateButtonText}>Confirm Date</Text>
+                </TouchableOpacity>
+              </View>
             </View>
             <TouchableOpacity
               style={styles.modalCloseButton}
@@ -779,70 +871,60 @@ const AddEventScreen = ({ navigation, route }) => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: CommonStyles.container,
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 20,
-    paddingTop: 60,
+    ...CommonStyles.row,
+    padding: Spacing.lg,
+    paddingTop: Spacing.huge,
+    backgroundColor: Colors.glass.black10,
   },
   backButton: {
-    marginRight: 15,
+    marginRight: Spacing.base,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
+    ...Typography.h3,
   },
   content: {
     flex: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: Spacing.lg,
   },
   form: {
-    paddingBottom: 40,
+    paddingBottom: Spacing.xxxl,
   },
   inputGroup: {
-    marginBottom: 20,
+    marginBottom: Spacing.lg,
   },
   label: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
+    ...Typography.h5,
+    ...getStrongTextShadow(),
+    marginBottom: Spacing.sm,
   },
   toggleChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 10,
+    ...CommonStyles.row,
+    backgroundColor: Colors.glass.white15,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.xl,
+    marginRight: Spacing.md,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)'
+    borderColor: Colors.glass.white25,
   },
   toggleChipActive: {
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    borderColor: '#fff'
+    backgroundColor: Colors.glass.white30,
+    borderColor: Colors.glass.white50,
   },
   toggleChipText: {
-    color: '#fff',
-    marginLeft: 6,
-    fontWeight: '600'
+    ...Typography.body,
+    ...getTextShadow(),
+    marginLeft: Spacing.xs,
+    fontWeight: Typography.weight.semibold,
   },
-  input: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 10,
-    padding: 15,
-    color: '#fff',
-    fontSize: 16,
-  },
+  input: CommonStyles.input,
   inputText: {
     color: '#fff',
     fontSize: 16,
     flex: 1,
+    fontWeight: '600',
   },
   clickableInput: {
     flexDirection: 'row',
@@ -870,11 +952,52 @@ const styles = StyleSheet.create({
     marginTop: 5,
     fontStyle: 'italic',
   },
+  fromToToggle: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: BorderRadius.md,
+    padding: 4,
+    marginBottom: Spacing.md,
+  },
+  toggleButton: {
+    flex: 1,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.sm,
+    alignItems: 'center',
+  },
+  toggleButtonActive: {
+    backgroundColor: Colors.status.info.solid,
+  },
+  toggleButtonText: {
+    ...Typography.body,
+    color: Colors.text.secondary,
+    fontWeight: '500',
+  },
+  toggleButtonTextActive: {
+    color: Colors.text.primary,
+    fontWeight: '600',
+  },
+  inputContainer: {
+    position: 'relative',
+  },
   predictionsContainer: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(0,0,0,0.95)',
     borderRadius: 10,
-    marginTop: 10,
+    marginTop: 5,
     maxHeight: 200,
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    zIndex: 9999,
+    elevation: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   predictionItem: {
     flexDirection: 'row',
@@ -882,19 +1005,20 @@ const styles = StyleSheet.create({
     padding: 12,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.1)',
+    minHeight: 50,
   },
   predictionTextContainer: {
-    marginLeft: 10,
+    marginLeft: 12,
     flex: 1,
   },
   predictionMainText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    ...Typography.body,
+    color: Colors.text.primary,
+    fontWeight: '500',
   },
   predictionSecondaryText: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 14,
+    ...Typography.caption,
+    color: Colors.text.secondary,
     marginTop: 2,
   },
   travelTimeInfo: {
@@ -1058,6 +1182,62 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  dateSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 15,
+    marginBottom: 10,
+  },
+  customDateContainer: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    padding: 15,
+    marginTop: 10,
+  },
+  customDateLabel: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 10,
+  },
+  dateInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  dateInput: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    color: '#333',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    marginRight: 10,
+  },
+  todayButton: {
+    backgroundColor: '#667eea',
+    borderRadius: 8,
+    padding: 12,
+    paddingHorizontal: 16,
+  },
+  todayButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  confirmDateButton: {
+    backgroundColor: '#28a745',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+  },
+  confirmDateButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',

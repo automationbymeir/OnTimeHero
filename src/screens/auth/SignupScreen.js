@@ -13,6 +13,7 @@ import LinearGradient from 'react-native-linear-gradient';
 import auth from '@react-native-firebase/auth';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import Theme, { Colors, Typography, Spacing, BorderRadius, CommonStyles, getTextShadow, getStrongTextShadow, getDynamicBackground, createGlassCard } from '../../styles/theme';
 
 const SignupScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
@@ -60,7 +61,7 @@ const SignupScreen = ({ navigation }) => {
 
   return (
     <LinearGradient
-      colors={['#667eea', '#764ba2']}
+      colors={getDynamicBackground()}
       style={styles.container}
     >
       <KeyboardAvoidingView

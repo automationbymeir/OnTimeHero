@@ -11,9 +11,9 @@ import {
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
-import Geolocation from '@react-native-community/geolocation';
 import moment from 'moment';
 import GoogleMapsService from '../../services/GoogleMapsService';
+import LocationService from '../../services/LocationService';
 import NotificationService from '../../services/NotificationService';
 import GamificationService from '../../services/GamificationService';
 import firestore from '@react-native-firebase/firestore';
@@ -30,6 +30,7 @@ const JourneyTrackingScreen = ({ route, navigation }) => {
   const [duration, setDuration] = useState(null);
   const [eta, setEta] = useState(null);
   const [hasArrived, setHasArrived] = useState(false);
+  const [arrivalProcessed, setArrivalProcessed] = useState(false);
   const mapRef = useRef(null);
   const watchId = useRef(null);
 
@@ -41,9 +42,8 @@ const JourneyTrackingScreen = ({ route, navigation }) => {
     startLocationTracking();
 
     return () => {
-      if (watchId.current) {
-        Geolocation.clearWatch(watchId.current);
-      }
+      // Stop location tracking on cleanup
+      LocationService.stopLocationTracking();
     };
   }, []);
 
@@ -66,12 +66,18 @@ const JourneyTrackingScreen = ({ route, navigation }) => {
     }
   };
 
-  const startLocationTracking = () => {
-    // Get initial location
-    Geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        const location = { latitude, longitude };
+  const startLocationTracking = async () => {
+    // Request location permission first
+    const hasPermission = await LocationService.requestLocationPermission();
+    if (!hasPermission) {
+      Alert.alert('Permission Required', 'Location permission is required to track your journey. Please enable it in settings.');
+      return;
+    }
+
+    // Get initial location using LocationService
+    try {
+      const location = await LocationService.getCurrentLocation();
+      if (location) {
         setCurrentLocation(location);
         console.log('📍 Initial location:', location);
 
@@ -82,20 +88,15 @@ const JourneyTrackingScreen = ({ route, navigation }) => {
             animated: true,
           });
         }
-      },
-      (error) => {
-        console.error('Error getting location:', error);
-        Alert.alert('Location Error', 'Unable to get your current location. Please enable location services.');
-      },
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 }
-    );
+      }
+    } catch (error) {
+      console.error('Error getting initial location:', error);
+      Alert.alert('Location Error', 'Unable to get your current location. Please try again.');
+    }
 
-    // Watch location changes
-    watchId.current = Geolocation.watchPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        const newLocation = { latitude, longitude };
-        setCurrentLocation(newLocation);
+    // Start watching location changes using LocationService
+    LocationService.startLocationTracking((newLocation) => {
+      setCurrentLocation(newLocation);
 
         // Check if user has arrived (within 50 meters of destination)
         if (destination && !hasArrived) {
@@ -118,19 +119,9 @@ const JourneyTrackingScreen = ({ route, navigation }) => {
           }
         }
 
-        // Update route with current location
-        updateRoute(newLocation);
-      },
-      (error) => {
-        console.error('Error watching location:', error);
-      },
-      {
-        enableHighAccuracy: true,
-        distanceFilter: 10, // Update every 10 meters
-        interval: 5000, // Update every 5 seconds
-        fastestInterval: 2000,
-      }
-    );
+      // Update route with current location
+      updateRoute(newLocation);
+    });
   };
 
   const updateRoute = async (origin) => {
@@ -216,15 +207,25 @@ const JourneyTrackingScreen = ({ route, navigation }) => {
   };
 
   const handleArrived = async () => {
+    // Prevent multiple submissions
+    if (arrivalProcessed) {
+      console.log('⚠️ Arrival already processed, ignoring duplicate request');
+      return;
+    }
+
     try {
+      setArrivalProcessed(true);
+
       const eventTime = moment(event.startTime.toDate ? event.startTime.toDate() : event.startTime);
       const now = moment();
       const isOnTime = now.isSameOrBefore(eventTime);
+      const wasEarly = now.isBefore(eventTime.clone().subtract(5, 'minutes'));
 
       console.log('🎯 Arrival confirmed');
       console.log('🎯 Event time:', eventTime.format('YYYY-MM-DD HH:mm:ss'));
       console.log('🎯 Arrival time:', now.format('YYYY-MM-DD HH:mm:ss'));
       console.log('🎯 Is on time:', isOnTime);
+      console.log('🎯 Was early:', wasEarly);
 
       // Update event status in Firestore or Local Storage
       const currentUser = auth().currentUser;
@@ -247,6 +248,7 @@ const JourneyTrackingScreen = ({ route, navigation }) => {
                 ...e,
                 status: 'completed',
                 arrivedOnTime: isOnTime,
+                wasEarly: wasEarly,
                 completedAt: new Date().toISOString(),
                 lastModified: lastModified.toISOString(),
               };
@@ -273,6 +275,7 @@ const JourneyTrackingScreen = ({ route, navigation }) => {
           .update({
             status: 'completed',
             arrivedOnTime: isOnTime,
+            wasEarly: wasEarly,
             completedAt: firestore.Timestamp.now(),
             lastModified: firestore.Timestamp.fromDate(lastModified),
           });
@@ -284,21 +287,28 @@ const JourneyTrackingScreen = ({ route, navigation }) => {
         console.log('📍 Verification - Firestore arrivedOnTime:', verifyDoc.data()?.arrivedOnTime);
       }
 
-      // Award points and show notification
-      if (isOnTime) {
-        await GamificationService.awardPoints(50, 'On-time arrival');
-        await GamificationService.checkAndAwardBadges();
-      }
+      // Award points using the proper event points method
+      const updatedEvent = {
+        ...event,
+        status: 'completed',
+        arrivedOnTime: isOnTime,
+        wasEarly: wasEarly,
+      };
+      await GamificationService.awardEventPoints(updatedEvent);
+      await GamificationService.checkAchievements();
 
-      // Show arrival notification
-      await NotificationService.showArrivalNotification(event, isOnTime, 50);
+      // Show arrival notification with correct XP
+      const xpAwarded = wasEarly ? 100 : (isOnTime ? 50 : 0);
+      await NotificationService.showArrivalNotification(event, isOnTime, xpAwarded);
 
       // Navigate back to dashboard
       Alert.alert(
-        isOnTime ? '🎉 Great Job!' : '⚠️ Arrived Late',
-        isOnTime
-          ? 'You arrived on time! +50 XP earned!'
-          : 'You arrived late. Try to leave earlier next time.',
+        wasEarly ? '🌟 Amazing!' : (isOnTime ? '🎉 Great Job!' : '⚠️ Arrived Late'),
+        wasEarly
+          ? 'You arrived early! +100 XP earned!'
+          : (isOnTime
+            ? 'You arrived on time! +50 XP earned!'
+            : 'You arrived late. Try to leave earlier next time.'),
         [
           {
             text: 'OK',
@@ -309,6 +319,8 @@ const JourneyTrackingScreen = ({ route, navigation }) => {
     } catch (error) {
       console.error('Error handling arrival:', error);
       Alert.alert('Error', 'Failed to record arrival. Please try again.');
+      // Reset the processed flag if there was an error
+      setArrivalProcessed(false);
     }
   };
 

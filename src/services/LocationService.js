@@ -34,35 +34,74 @@ class LocationService {
   }
 
   async getCurrentLocation() {
-    return new Promise((resolve, reject) => {
-      Geolocation.getCurrentPosition(
-        (position) => {
-          this.currentLocation = {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-            timestamp: position.timestamp,
-          };
-          console.log('✅ Got current location:', this.currentLocation);
-          resolve(this.currentLocation);
-        },
-        (error) => {
-          console.error('❌ Location error:', error);
-          // If we have a cached location, use it
-          if (this.currentLocation) {
-            console.log('⚠️ Using cached location due to error');
-            resolve(this.currentLocation);
-          } else {
-            reject(error);
-          }
-        },
-        {
-          enableHighAccuracy: false, // Use false for faster response
-          timeout: 30000, // Increased to 30 seconds
-          maximumAge: 300000, // Accept locations up to 5 minutes old
-        }
+    // Ensure permission before attempting lookup
+    const hasPermission = await this.requestLocationPermission();
+    if (!hasPermission) {
+      console.warn('❌ Location permission denied');
+      return this.currentLocation || null;
+    }
+
+    const getPosition = (options) =>
+      new Promise((resolve, reject) =>
+        Geolocation.getCurrentPosition(
+          (position) => resolve(position),
+          (error) => reject(error),
+          options,
+        ),
       );
-    });
+
+    const baseOptions = {
+      timeout: 10000, // 10s for primary attempt
+      maximumAge: 600000, // accept up to 10 minutes old if provided by OS
+      showLocationDialog: true, // Android: prompt to enable location
+      forceRequestLocation: true,
+    };
+
+    // 1) Try high-accuracy fast
+    try {
+      const position = await getPosition({
+        ...baseOptions,
+        enableHighAccuracy: true,
+      });
+      this.currentLocation = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        timestamp: position.timestamp,
+      };
+      console.log('✅ Got current location (high accuracy):', this.currentLocation);
+      return this.currentLocation;
+    } catch (e1) {
+      console.warn('⚠️ High-accuracy location failed, falling back:', e1?.message || e1);
+    }
+
+    // 2) Fallback to low-accuracy with shorter timeout (should be very quick)
+    try {
+      const position = await getPosition({
+        ...baseOptions,
+        enableHighAccuracy: false,
+        timeout: 5000,
+      });
+      this.currentLocation = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        timestamp: position.timestamp,
+      };
+      console.log('✅ Got current location (low accuracy):', this.currentLocation);
+      return this.currentLocation;
+    } catch (e2) {
+      console.warn('⚠️ Low-accuracy location failed:', e2?.message || e2);
+    }
+
+    // 3) Last resort: return cached location if available rather than throwing
+    if (this.currentLocation) {
+      console.log('⚠️ Returning cached location');
+      return this.currentLocation;
+    }
+
+    console.error('❌ Unable to retrieve location (no cached value)');
+    return null;
   }
 
   startLocationTracking(callback) {
@@ -222,19 +261,26 @@ class LocationService {
   }
 
   async estimateTravelTime(destinationAddress, mode = 'driving') {
-    // In production, use Google Maps Distance Matrix API
-    // For demo purposes, return mock travel times
-    const mockTravelTimes = {
-      'conference room b': 5,
-      'office': 8,
-      'meeting room a': 3,
-      'cafeteria': 10,
-      'lobby': 2,
-      'parking lot': 15,
-    };
+    try {
+      const GoogleMapsService = require('./GoogleMapsService').default;
 
-    const normalizedAddress = destinationAddress.toLowerCase().trim();
-    return mockTravelTimes[normalizedAddress] || 15; // Default 15 minutes
+      console.log('🗺️ Estimating travel time to:', destinationAddress);
+
+      // Use Google Maps to calculate actual travel time from current location
+      const result = await GoogleMapsService.calculateTravelTimeFromCurrentLocation(destinationAddress);
+
+      if (result && result.duration) {
+        console.log('✅ Travel time estimated:', result.duration, 'minutes');
+        return result.duration;
+      }
+
+      // Fallback to default if Google Maps fails
+      console.warn('⚠️ Could not calculate travel time, using default 15 minutes');
+      return 15;
+    } catch (error) {
+      console.error('❌ Error estimating travel time:', error);
+      return 15; // Default 15 minutes
+    }
   }
 
   async getDepartureTime(event) {

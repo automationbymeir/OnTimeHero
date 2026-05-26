@@ -60,6 +60,24 @@ class GoogleCalendarService {
       // Clear the promise on error
       this.tokenPromise = null;
       console.error('Error getting tokens:', error);
+      
+      // If token error, try to refresh by signing in again
+      if (error.message && error.message.includes('401')) {
+        console.log('Token expired, attempting to refresh...');
+        try {
+          // Clear cached tokens
+          this.cachedTokens = null;
+          this.tokenExpiry = null;
+          
+          // Try to sign in again to get fresh tokens
+          await this.ensureSignedIn();
+          return await this.getTokensSafely();
+        } catch (refreshError) {
+          console.error('Failed to refresh tokens:', refreshError);
+          throw refreshError;
+        }
+      }
+      
       throw error;
     }
   }
@@ -138,6 +156,46 @@ class GoogleCalendarService {
       if (!response.ok) {
         const errorData = await response.text();
         console.error('Calendar API error:', response.status, errorData);
+        
+        // If 401 error, try to refresh tokens and retry once
+        if (response.status === 401) {
+          console.log('401 error detected, attempting token refresh...');
+          try {
+            // Clear cached tokens
+            this.cachedTokens = null;
+            this.tokenExpiry = null;
+            
+            // Get fresh tokens
+            const freshTokens = await this.getTokensSafely();
+            
+            // Retry the request with fresh tokens
+            const retryResponse = await fetch(
+              `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
+              `timeMin=${moment().toISOString()}&` +
+              `timeMax=${moment().add(30, 'days').toISOString()}&` +
+              `singleEvents=true&` +
+              `orderBy=startTime`,
+              {
+                headers: {
+                  Authorization: `Bearer ${freshTokens.accessToken}`,
+                  'Content-Type': 'application/json',
+                },
+              }
+            );
+            
+            if (retryResponse.ok) {
+              console.log('Retry successful with fresh tokens');
+              const retryData = await retryResponse.json();
+              if (retryData.items && retryData.items.length > 0) {
+                await this.saveEventsToFirestore(retryData.items);
+              }
+              return retryData.items || [];
+            }
+          } catch (retryError) {
+            console.error('Retry failed:', retryError);
+          }
+        }
+        
         throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
       }
 

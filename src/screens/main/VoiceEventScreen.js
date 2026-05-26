@@ -7,6 +7,7 @@ import auth from '@react-native-firebase/auth';
 import Voice from '@react-native-voice/voice';
 import { useNavigation } from '@react-navigation/native';
 import GoogleCalendarService from '../../services/GoogleCalendarService';
+import Theme, { Colors, Typography, Spacing, BorderRadius, CommonStyles, getTextShadow, getStrongTextShadow, getDynamicBackground, createGlassCard } from '../../styles/theme';
 import GoogleMapsService from '../../services/GoogleMapsService';
 
 // Suppress NativeEventEmitter warning from react-native-voice library
@@ -61,8 +62,8 @@ const VoiceEventScreen = ({ navigation }) => {
   const [eventData, setEventData] = useState({});
   const [language, setLanguage] = useState('en-US');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isVoiceReady, setIsVoiceReady] = useState(false);
-  const isVoiceReadyRef = useRef(false);
+  const [isVoiceReady, setIsVoiceReady] = useState(true);
+  const isVoiceReadyRef = useRef(true);
   const isShowingAlert = useRef(false);
   const [retryCount, setRetryCount] = useState(0);
   const [inputMode, setInputMode] = useState('voice'); // 'voice' or 'text'
@@ -74,9 +75,14 @@ const VoiceEventScreen = ({ navigation }) => {
   const conversationHistory = useRef([]);
   const scrollViewRef = useRef(null);
 
-  // Load chat history on component mount
+  // Load chat history and add welcome message on component mount
   useEffect(() => {
     loadChatHistory();
+    // Add welcome message immediately to avoid showing the big mic icon
+    setMessages([{
+      role: 'assistant',
+      content: '👋 Hi! I\'m your voice assistant. Tell me about an event you\'d like to schedule, and I\'ll help you create it.'
+    }]);
   }, []);
 
   // Save chat history after every assistant response
@@ -705,7 +711,7 @@ async function callGenkitParser(transcript, fieldType = null, conversationalOpti
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <LinearGradient colors={['#667eea', '#764ba2']} style={styles.container}>
+      <LinearGradient colors={getDynamicBackground()} style={styles.container}>
         <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Icon name="arrow-back" size={24} color="#fff" />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,1106 +6,1345 @@ import {
   StyleSheet,
   TouchableOpacity,
   RefreshControl,
-  Image,
+  ImageBackground,
+  StatusBar,
+  Dimensions,
+  DeviceEventEmitter,
   Alert,
-  AppState,
 } from 'react-native';
-import { DeviceEventEmitter } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import firestore from '@react-native-firebase/firestore';
 import auth from '@react-native-firebase/auth';
 import moment from 'moment';
-import NextEventCard from '../../components/dashboard/NextEventCard';
-import StreakWidget from '../../components/dashboard/StreakWidget';
-import QuickStats from '../../components/dashboard/QuickStats';
 import GoogleCalendarService from '../../services/GoogleCalendarService';
-import GamificationService from '../../services/GamificationService';
-import NotificationService from '../../services/NotificationService';
 import LocationService from '../../services/LocationService';
+import GoogleMapsService from '../../services/GoogleMapsService';
+import GamificationService from '../../services/GamificationService';
+import Theme, {
+  Colors,
+  Typography,
+  Spacing,
+  BorderRadius,
+  CommonStyles,
+  getDynamicBackground,
+  getBackgroundImage,
+  getFadeGradient,
+  getGreeting,
+  getTimeOfDay,
+  formatTime,
+  formatDate,
+  getSubtleTextShadow,
+  getStrongTextShadow,
+  getTextShadow,
+  createGlassCard,
+  getStatusColor,
+  getAdaptiveGlassColors,
+} from '../../styles/theme';
+
+const { height } = Dimensions.get('window');
 
 const DashboardScreen = ({ navigation }) => {
-  const [user, setUser] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [nextEvent, setNextEvent] = useState(null);
-  const [recentEvents, setRecentEvents] = useState([]); // Add recent events state
+  const [recentEvents, setRecentEvents] = useState([]);
   const [stats, setStats] = useState({
     points: 0,
-    badges: 0,
-    punctualityRate: 0,
     currentStreak: 0,
+    punctualityRate: 0,
+    level: 1,
+    xpForNextLevel: 100,
   });
-  const [refreshing, setRefreshing] = useState(false);
-  const [greeting, setGreeting] = useState('');
-  const [settingsClickCount, setSettingsClickCount] = useState(0);
-  const [firestoreStatus, setFirestoreStatus] = useState('connected'); // Track Firestore status
-  const refreshIntervalRef = useRef(null);
-  const appState = useRef(AppState.currentState);
+  const [events, setEvents] = useState([]);
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [currentLocationName, setCurrentLocationName] = useState('Getting location...');
+  const [userName, setUserName] = useState('User');
+  const [notificationCount, setNotificationCount] = useState(0);
+  const [forceUpdate, setForceUpdate] = useState(0);
 
-  // Utility function to retry Firestore operations
-  const retryFirestoreOperation = async (operation, maxRetries = 3, delay = 1000) => {
-    for (let i = 0; i < maxRetries; i++) {
-      try {
-        return await operation();
-      } catch (error) {
-        if (error.code === 'unavailable' || error.code === 'deadline-exceeded') {
-          if (i < maxRetries - 1) {
-            console.log(`🔄 Retrying Firestore operation (attempt ${i + 1}/${maxRetries})...`);
-            await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i))); // Exponential backoff
-          } else {
-            console.log('❌ Firestore operation failed after all retries');
-            throw error;
-          }
-        } else {
-          throw error;
-        }
-      }
-    }
-  };
+  const backgroundImage = getBackgroundImage();
+  const fadeColors = getFadeGradient();
+  const greeting = getGreeting();
+  const timeOfDay = getTimeOfDay();
+  const adaptiveGlass = getAdaptiveGlassColors();
+  const adaptiveStyles = createAdaptiveStyles(adaptiveGlass);
 
-  useEffect(() => {
-    initializeDashboard();
-    
-    // Set up automatic refresh every 30 seconds
-    refreshIntervalRef.current = setInterval(() => {
-      console.log('Auto-refreshing dashboard...');
-      loadNextEvent();
-    }, 30000); // 30 seconds
-
-    // Listen for app state changes
-    const handleAppStateChange = (nextAppState) => {
-      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
-        console.log('App came to foreground, refreshing dashboard...');
-        loadNextEvent();
-      }
-      appState.current = nextAppState;
-    };
-
-    const subscription = AppState.addEventListener('change', handleAppStateChange);
-
-    // Listen for navigation focus to refresh when user comes to this screen
-    const unsubscribeFocus = navigation.addListener('focus', () => {
-      console.log('Dashboard screen focused, refreshing events...');
-      loadNextEvent();
-      loadRecentEvents(); // Also refresh recent events
-    });
-
-    // Listen for saved route updates to refresh nextEvent immediately
-    const sub = DeviceEventEmitter.addListener('EVENT_ROUTE_UPDATED', (updatedEvent) => {
-      setNextEvent(prev => prev && prev.id === updatedEvent.id ? { ...prev, origin: updatedEvent.origin, location: updatedEvent.location } : prev);
-    });
-
-    return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-      }
-      subscription?.remove();
-      unsubscribeFocus();
-      sub.remove();
-    };
-  }, []);
-
-  const initializeDashboard = async () => {
-    setGreeting(getGreeting());
-    await loadUserData();
-    await loadNextEvent();
-    await loadRecentEvents();
-    // Trigger calendar sync on startup
-    await syncCalendarData();
-  };
-
-  const syncCalendarData = async () => {
-    try {
-      console.log('🔄 Starting calendar sync on dashboard load...');
-      const calendarService = GoogleCalendarService;
-      await calendarService.syncCalendarEvents();
-      console.log('✅ Calendar sync completed, reloading events...');
-      // Reload events after sync
-      await loadNextEvent();
-      console.log('✅ Events reloaded after calendar sync');
-    } catch (error) {
-      console.error('❌ Error syncing calendar on dashboard load:', error);
-      console.error('❌ Calendar sync error details:', error.message);
-    }
-  };
-
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good Morning';
-    if (hour < 17) return 'Good Afternoon';
-    return 'Good Evening';
-  };
-
+  // Load user data
   const loadUserData = async () => {
     const currentUser = auth().currentUser;
-    if (!currentUser) return;
+    if (currentUser) {
+      const displayName = currentUser.displayName || currentUser.email?.split('@')[0] || 'User';
+      setUserName(displayName);
+    }
+  };
 
-    // First, set basic user data from Firebase Auth
-    const basicUserData = {
-      displayName: currentUser.displayName,
-      email: currentUser.email,
-      photoURL: currentUser.photoURL,
-      uid: currentUser.uid,
-    };
-    setUser(basicUserData);
-
+  // Load user stats from GamificationService
+  const loadUserStats = async () => {
     try {
-      // Check if Firestore is available with retry logic
-      const userDoc = await retryFirestoreOperation(async () => {
-        await firestore().enableNetwork();
-        return await firestore()
-          .collection('users')
-          .doc(currentUser.uid)
-          .get();
-      });
+      const userStats = await GamificationService.getUserStats();
       
-      if (userDoc.exists) {
-        const userData = userDoc.data();
-        // Merge Firestore data with basic user data
-        const mergedUserData = {
-          ...basicUserData,
-          ...userData,
-        };
-        setUser(mergedUserData);
-
-        // Calculate punctuality rate from events
-        const calculatePunctualityRate = async () => {
-          try {
-            const eventsSnapshot = await firestore()
-              .collection('events')
-              .where('userId', '==', currentUser.uid)
-              .where('status', '==', 'completed')
-              .get();
-
-            const totalEvents = eventsSnapshot.size;
-            if (totalEvents === 0) return 0;
-
-            const onTimeEvents = eventsSnapshot.docs.filter(doc =>
-              doc.data().arrivedOnTime === true
-            ).length;
-
-            return Math.round((onTimeEvents / totalEvents) * 100);
-          } catch (error) {
-            console.error('Error calculating punctuality:', error);
-            return userData.punctualityScore || 0;
-          }
-        };
-
-        const punctualityRate = await calculatePunctualityRate();
-
-        setStats({
-          points: userData.xp || 0,
-          badges: (userData.badges || []).length,
-          punctualityRate: punctualityRate,
-          currentStreak: userData.currentStreak || 0,
+      if (userStats) {
+        console.log('📊 User stats loaded:', userStats);
+        
+        setStats(prevStats => ({
+          ...prevStats,
+          points: userStats.xp,
+          level: userStats.level,
+          currentStreak: userStats.currentStreak,
+          xpForNextLevel: userStats.xpForNextLevel,
+        }));
+        
+        console.log('📊 User stats updated in state:', {
+          points: userStats.xp,
+          level: userStats.level,
+          currentStreak: userStats.currentStreak,
+          xpForNextLevel: userStats.xpForNextLevel,
         });
-        setFirestoreStatus('connected');
-        console.log('✅ User data loaded successfully from Firestore');
+      } else {
+        console.log('❌ No user stats found, setting defaults');
+        setStats(prevStats => ({
+          ...prevStats,
+          points: 0,
+          level: 1,
+          currentStreak: 0,
+          xpForNextLevel: 100,
+        }));
       }
     } catch (error) {
       console.error('❌ Error loading user stats:', error);
-      
-      // If Firestore is unavailable, try to load from local storage
-      if (error.code === 'unavailable' || error.code === 'deadline-exceeded') {
-        console.log('⚠️ Firestore temporarily unavailable, loading user data from local storage');
-        setFirestoreStatus('unavailable');
-        try {
-          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-          const localProfile = await AsyncStorage.getItem('userProfile');
-          if (localProfile) {
-            const profileData = JSON.parse(localProfile);
-            // Merge local data with basic user data
-            const mergedUserData = {
-              ...basicUserData,
-              ...profileData,
-            };
-            setUser(mergedUserData);
-            setStats({
-              points: profileData.xp || 0,
-              badges: profileData.badgeCount || 0,
-              punctualityRate: profileData.punctualityScore || 0,
-              currentStreak: profileData.currentStreak || 0,
-            });
-          }
-        } catch (localError) {
-          console.error('Error loading local user data:', localError);
-        }
-      }
     }
   };
 
-  const loadNextEvent = async () => {
-    const currentUser = auth().currentUser;
-    if (!currentUser) return;
-
+  // Load notification count
+  const loadNotificationCount = async () => {
     try {
-      // Load Firestore events with retry logic
-      let firestoreEvents = [];
-      try {
-        const eventsSnapshot = await retryFirestoreOperation(async () => {
-          await firestore().enableNetwork();
-          // Get events from 30 minutes ago to show recent past events too
-          const thirtyMinutesAgo = new Date();
-          thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
-          const thirtyMinutesAgoTimestamp = firestore.Timestamp.fromDate(thirtyMinutesAgo);
-          console.log('📅 Dashboard: Getting events from 30 minutes ago:', thirtyMinutesAgoTimestamp.toDate());
-          return await firestore()
-            .collection('events')
-            .where('userId', '==', currentUser.uid)
-            .where('startTime', '>=', thirtyMinutesAgoTimestamp)
-            .orderBy('startTime')
-            .limit(10)
-            .get();
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const notifications = await AsyncStorage.getItem('userNotifications');
+      if (notifications) {
+        const parsedNotifications = JSON.parse(notifications);
+        const unreadCount = parsedNotifications.filter(n => !n.read).length;
+        setNotificationCount(unreadCount);
+        console.log('📱 Dashboard: Loaded notification count:', unreadCount);
+      }
+    } catch (error) {
+      console.error('Error loading notification count:', error);
+    }
+  };
+
+  // Load current location and then events
+  useEffect(() => {
+    console.log('🚀 Dashboard: useEffect triggered - initializing dashboard');
+    const initialize = async () => {
+      console.log('🚀 Dashboard: Starting initialization');
+      await loadUserData();
+      await loadUserStats();
+      await loadNotificationCount();
+      const location = await getCurrentLocation();
+      console.log('🚀 Dashboard: Location obtained, loading events');
+      await loadEvents(location);
+      console.log('🚀 Dashboard: Events loaded, initialization complete');
+    };
+    initialize();
+  }, []);
+
+  // Listen for TIME_TO_LEAVE events to update dashboard and navigate to lock screen
+  useEffect(() => {
+    const timeToLeaveListener = DeviceEventEmitter.addListener('TIME_TO_LEAVE', (data) => {
+      console.log('🚨 Dashboard: TIME_TO_LEAVE event received:', data);
+      
+      // Update the next event status to show "time to leave"
+      if (nextEvent && nextEvent.id === data.eventId) {
+        // Don't trigger lock screen if event is already completed
+        if (nextEvent.status === 'completed') {
+          console.log('🚨 Dashboard: Event already completed, skipping lock screen');
+          return;
+        }
+        
+        setNextEvent(prev => ({
+          ...prev,
+          status: 'time-to-leave'
+        }));
+        console.log('🚨 Dashboard: Updated next event status to time-to-leave');
+        
+        // Navigate to lock screen
+        console.log('🚨 Dashboard: Navigating to PhoneLock screen');
+        navigation.navigate('PhoneLock', { eventId: nextEvent.id });
+      }
+    });
+
+    return () => {
+      timeToLeaveListener.remove();
+    };
+  }, [nextEvent, navigation]);
+
+  // Listen for stats reset events
+  useEffect(() => {
+    console.log('🎧 Dashboard: Setting up event listeners...');
+    
+    
+    const statsResetListener = DeviceEventEmitter.addListener('STATS_RESET', () => {
+      console.log('🔄 Dashboard: Stats reset event received, reloading user stats');
+      console.log('🔄 Current stats before reset:', stats);
+      
+      // Immediately set stats to reset values
+      const resetStats = {
+        points: 0,
+        level: 1,
+        currentStreak: 0,
+        xpForNextLevel: 100,
+      };
+      console.log('🔄 Dashboard: Immediately setting stats to reset values:', resetStats);
+      setStats(prevStats => {
+        const updatedStats = {
+          ...prevStats,
+          ...resetStats,
+        };
+        console.log('🔄 Dashboard: Stats updated from', prevStats, 'to', updatedStats);
+        return updatedStats;
+      });
+      
+      // Then reload from Firestore
+      loadUserStats();
+      
+      // Force a re-render by updating a dummy state
+      setForceUpdate(prev => prev + 1);
+    });
+
+    const forceRefreshListener = DeviceEventEmitter.addListener('FORCE_REFRESH', () => {
+      console.log('🔄 Dashboard: Force refresh event received');
+      onRefresh();
+    });
+
+    const pointsUpdateListener = DeviceEventEmitter.addListener('POINTS_UPDATED', (data) => {
+      console.log('🎯 Dashboard: Points updated event received:', data);
+      console.log('🎯 Dashboard: Event data type:', typeof data);
+      console.log('🎯 Dashboard: Event data keys:', data ? Object.keys(data) : 'null');
+      
+      const newStats = {
+        points: data.points || 0,
+        level: data.level || 1,
+        currentStreak: data.currentStreak || 0,
+        xpForNextLevel: data.xpForNextLevel || (data.level * 100 - data.points) || 100,
+      };
+      console.log('🎯 Dashboard: Setting stats to:', newStats);
+      setStats(prevStats => {
+        const updatedStats = {
+          ...prevStats,
+          ...newStats,
+        };
+        console.log('🎯 Dashboard: Stats updated from', prevStats, 'to', updatedStats);
+        return updatedStats;
+      });
+      
+      // Force a re-render
+      setForceUpdate(prev => prev + 1);
+    });
+
+    const achievementListener = DeviceEventEmitter.addListener('ACHIEVEMENT_EARNED', (achievement) => {
+      console.log('🏆 Dashboard: Achievement earned:', achievement);
+      // Show achievement popup
+      showAchievementPopup(achievement);
+    });
+
+    const levelUpListener = DeviceEventEmitter.addListener('LEVEL_UP', (data) => {
+      console.log('🎉 Dashboard: Level up event received:', data);
+      showLevelUpPopup(data);
+    });
+
+    const completeResetListener = DeviceEventEmitter.addListener('COMPLETE_RESET', (data) => {
+      console.log('🔄 Dashboard: Complete reset event received:', data);
+      const resetStats = {
+        points: data.points || 0,
+        level: data.level || 1,
+        currentStreak: data.currentStreak || 0,
+        xpForNextLevel: data.xpForNextLevel || 100,
+      };
+      console.log('🔄 Dashboard: Setting complete reset stats:', resetStats);
+      setStats(prevStats => {
+        const updatedStats = {
+          ...prevStats,
+          ...resetStats,
+        };
+        console.log('🔄 Dashboard: Complete reset stats updated from', prevStats, 'to', updatedStats);
+        return updatedStats;
+      });
+      
+      // Force a re-render
+      setForceUpdate(prev => prev + 1);
+    });
+
+
+    return () => {
+      statsResetListener.remove();
+      forceRefreshListener.remove();
+      pointsUpdateListener.remove();
+      achievementListener.remove();
+      levelUpListener.remove();
+      completeResetListener.remove();
+    };
+  }, []); // Remove stats dependency to prevent multiple listeners
+
+  // Timer to check if it's time to leave for the next event
+  useEffect(() => {
+    if (!nextEvent || nextEvent.status === 'completed') return;
+
+    const updateEventStatus = () => {
+      const eventDate = getEventDate(nextEvent.startTime);
+      if (!eventDate) return;
+      
+      const eventTime = moment(eventDate);
+      const actualTravelTime = nextEvent.travelTime || 15;
+      const leaveTime = eventTime.clone().subtract(actualTravelTime, 'minutes');
+      const now = moment();
+      const diff = leaveTime.diff(now, 'minutes');
+
+      console.log('⏰ Dashboard timer check:', {
+        event: nextEvent.title,
+        eventTime: eventTime.format('HH:mm'),
+        leaveTime: leaveTime.format('HH:mm'),
+        minutesUntilLeave: diff,
+        currentTime: now.format('HH:mm'),
+        currentStatus: nextEvent.status
+      });
+
+      // Update status based on time remaining
+      if (diff <= 0) {
+        // It's time to leave now
+        if (nextEvent.status !== 'time-to-leave') {
+          console.log('🔴 Dashboard: Time to leave NOW! Updating status');
+          setNextEvent(prev => ({
+            ...prev,
+            status: 'time-to-leave'
+          }));
+          
+        // Navigate to lock screen
+        console.log('🚨 Dashboard: Auto-navigating to PhoneLock screen');
+        navigation.navigate('PhoneLock', { eventId: nextEvent.id });
+        }
+      } else if (diff <= 5) {
+        // Within 5 minutes - show warning
+        if (nextEvent.status === 'upcoming') {
+          console.log('🟡 Dashboard: Within 5 minutes, updating to warning status');
+          setNextEvent(prev => ({
+            ...prev,
+            status: 'warning'
+          }));
+        }
+      }
+    };
+
+    // Check immediately
+    updateEventStatus();
+
+    // Set up interval to check every 10 seconds for more responsive updates
+    const interval = setInterval(updateEventStatus, 10000);
+
+    return () => clearInterval(interval);
+  }, [nextEvent, navigation]);
+
+  // Listen for notification updates
+  useEffect(() => {
+    const notificationReceivedListener = DeviceEventEmitter.addListener('NOTIFICATION_RECEIVED', () => {
+      console.log('📱 Dashboard: Notification received, updating count');
+      loadNotificationCount();
+    });
+
+    const notificationClearedListener = DeviceEventEmitter.addListener('NOTIFICATIONS_CLEARED', () => {
+      console.log('📱 Dashboard: Notifications cleared, updating count');
+      loadNotificationCount();
+    });
+
+    const notificationReadListener = DeviceEventEmitter.addListener('NOTIFICATION_READ', () => {
+      console.log('📱 Dashboard: Notification marked as read, updating count');
+      loadNotificationCount();
+    });
+
+    return () => {
+      notificationReceivedListener.remove();
+      notificationClearedListener.remove();
+      notificationReadListener.remove();
+    };
+  }, []);
+
+  // Listen for event status updates from calendar screen
+  useEffect(() => {
+    const eventStatusUpdateListener = DeviceEventEmitter.addListener('EVENT_STATUS_UPDATED', (updatedEvent) => {
+      console.log('📱 Dashboard: Event status updated:', updatedEvent);
+      
+      // Update the events list
+      setEvents(prev => prev.map(e => e.id === updatedEvent.id ? updatedEvent : e));
+      
+      // If this event is now in "time-to-leave" status, make it the next event
+      if (updatedEvent.status === 'time-to-leave') {
+        console.log('📱 Dashboard: Making time-to-leave event the next event');
+        setNextEvent(updatedEvent);
+      }
+      // If this is the current next event and status changed, update it
+      else if (nextEvent && nextEvent.id === updatedEvent.id) {
+        setNextEvent(updatedEvent);
+      }
+    });
+
+    return () => {
+      eventStatusUpdateListener.remove();
+    };
+  }, [nextEvent]);
+
+  // Listen for event completion
+  useEffect(() => {
+    const eventCompletedListener = DeviceEventEmitter.addListener('EVENT_COMPLETED', (completedEvent) => {
+      console.log('📱 Dashboard: Event completed:', completedEvent);
+      
+      // Update the events list
+      setEvents(prev => prev.map(e => e.id === completedEvent.id ? completedEvent : e));
+      
+      // If this was the current next event, show completed status for 1 minute
+      if (nextEvent && nextEvent.id === completedEvent.id) {
+        console.log('📱 Dashboard: Current event completed, showing completed status');
+        
+        // Show completed event with green status
+        setNextEvent({
+          ...completedEvent,
+          status: 'completed',
+          showCompleted: true
         });
         
-        firestoreEvents = eventsSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          isLocal: false,
-        }));
-        console.log('✅ Loaded', firestoreEvents.length, 'events from Firestore');
-      } catch (firestoreError) {
-        if (firestoreError.code === 'unavailable' || firestoreError.code === 'deadline-exceeded') {
-          console.log('⚠️ Firestore temporarily unavailable for events:', firestoreError.message);
-        } else {
-          console.log('❌ Firestore events unavailable:', firestoreError);
-        }
-      }
-
-      // Load local events
-      let localEvents = [];
-      try {
-        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        const localEventsData = await AsyncStorage.getItem('localEvents');
-             if (localEventsData) {
-               const parsedLocalEvents = JSON.parse(localEventsData);
-               // Filter events from 30 minutes ago
-               const thirtyMinutesAgo = new Date();
-               thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
-               console.log('📅 Dashboard: Raw local events:', parsedLocalEvents.length);
-               localEvents = parsedLocalEvents
-                 .filter(event => new Date(event.startTime) >= thirtyMinutesAgo)
-                 .map(event => ({
-              ...event,
-              startTime: { toDate: () => new Date(event.startTime) },
-              endTime: { toDate: () => new Date(event.endTime) },
-              isLocal: true,
-            }));
-        }
-      } catch (localError) {
-        console.log('Local events unavailable:', localError);
-      }
-
-      // Combine and sort all events, removing duplicates
-      // Prioritize Firestore events over local events (by id, googleEventId, or title+time match)
-      const allEventsMap = new Map();
-
-      // First add Firestore events
-      firestoreEvents.forEach(event => {
-        // Use event ID as primary key, fallback to googleEventId or title+time
-        const key = event.id || event.googleEventId || `${event.title}_${moment(event.startTime.toDate()).format('YYYY-MM-DD HH:mm')}`;
-        allEventsMap.set(key, event);
-      });
-
-      // Then add local events only if they don't exist in Firestore
-      localEvents.forEach(event => {
-        // Use event ID as primary key, fallback to googleEventId or title+time
-        const key = event.id || event.googleEventId || `${event.title}_${moment(event.startTime.toDate()).format('YYYY-MM-DD HH:mm')}`;
-        if (!allEventsMap.has(key)) {
-          allEventsMap.set(key, event);
-        } else {
-          console.log('📅 Dashboard: Skipping duplicate local event:', event.title);
-        }
-      });
-
-      const allEvents = Array.from(allEventsMap.values()).sort((a, b) =>
-        new Date(a.startTime.toDate()) - new Date(b.startTime.toDate())
-      );
-
-      // Debug all events and their statuses
-      console.log('📍 All events loaded:');
-      allEvents.forEach(e => {
-        const eventTime = e.startTime.toDate ? e.startTime.toDate() : new Date(e.startTime);
-        const isFuture = eventTime > now;
-        console.log(`  - ${e.title}: status="${e.status}", startTime=${moment(eventTime).format('YYYY-MM-DD HH:mm')}, isFuture=${isFuture}, isLocal=${e.isLocal}`);
-      });
-
-      const now = new Date();
-      const fiveSecondsAgo = new Date(now.getTime() - 5000); // 5 seconds ago
-
-      // First, check for recently completed events (within last 5 seconds)
-      const recentlyCompleted = allEvents.find(event =>
-        event.status === 'completed' &&
-        event.completedAt &&
-        new Date(event.completedAt.toDate ? event.completedAt.toDate() : event.completedAt) >= fiveSecondsAgo
-      );
-
-      // If there's a recently completed event, show it briefly
-      if (recentlyCompleted) {
-        console.log('📍 Showing recently completed event:', recentlyCompleted.title);
-        console.log('📍 Completed at:', new Date(recentlyCompleted.completedAt.toDate ? recentlyCompleted.completedAt.toDate() : recentlyCompleted.completedAt));
-        setNextEvent(recentlyCompleted);
-
-        // After 3 seconds, switch to next upcoming event
+        // After 1 minute, find the next upcoming event
         setTimeout(() => {
-          console.log('📍 Timeout triggered, switching to next event...');
-          const upcomingEvents = allEvents.filter(event => {
-            const isNotCompleted = event.status !== 'completed';
-            const isFuture = new Date(event.startTime.toDate()) > now;
-            console.log(`  - Checking ${event.title}: status="${event.status}", isNotCompleted=${isNotCompleted}, isFuture=${isFuture}`);
-            return isNotCompleted && isFuture;
+          console.log('📱 Dashboard: 1 minute passed, finding next event');
+          
+          const now = new Date();
+          const nextUpcomingEvent = events.find(event => {
+            const eventDate = getEventDate(event.startTime);
+            return event.id !== completedEvent.id && 
+                   event.status !== 'completed' && 
+                   eventDate && eventDate > now;
           });
-          if (upcomingEvents.length > 0) {
-            console.log('📍 Switching to next upcoming event:', upcomingEvents[0].title);
-            setNextEvent(upcomingEvents[0]);
+          
+          if (nextUpcomingEvent) {
+            console.log('📱 Dashboard: Setting next event to:', nextUpcomingEvent.title);
+            setNextEvent(nextUpcomingEvent);
           } else {
-            console.log('📍 No upcoming events, clearing card');
+            console.log('📱 Dashboard: No more upcoming events');
             setNextEvent(null);
           }
-        }, 3000);
-      } else {
-        // Show next upcoming event (exclude completed events)
-        const upcomingEvents = allEvents.filter(event => {
-          const isNotCompleted = event.status !== 'completed';
-          const isFuture = new Date(event.startTime.toDate()) > now;
-          console.log(`  - Checking ${event.title}: status="${event.status}", isNotCompleted=${isNotCompleted}, isFuture=${isFuture}`);
-          return isNotCompleted && isFuture;
-        });
-
-        if (upcomingEvents.length > 0) {
-          console.log('📍 Showing next upcoming event:', upcomingEvents[0].title);
-          setNextEvent(upcomingEvents[0]);
-        } else {
-          console.log('📍 No upcoming events');
-          setNextEvent(null);
-        }
+        }, 60000); // 1 minute = 60,000ms
       }
+    });
 
-      // Schedule notifications for all upcoming events
-      allEvents.forEach(event => {
-        if (event.status === 'upcoming' || event.status !== 'completed') {
-          NotificationService.scheduleEventNotifications(event).catch(err => {
-            console.log('Failed to schedule notifications for event:', event.title, err);
-          });
-        }
-      });
+    return () => {
+      eventCompletedListener.remove();
+    };
+  }, [nextEvent, events]);
 
+  // Listen for route updates
+  useEffect(() => {
+    const routeUpdateListener = DeviceEventEmitter.addListener('EVENT_ROUTE_UPDATED', (updatedEvent) => {
+      console.log('📱 Dashboard: Route updated:', updatedEvent);
+      
+      // Only proceed if the updated event has a valid startTime
+      if (!updatedEvent.startTime) {
+        console.log('⚠️ Dashboard: Skipping route update - event has no startTime');
+        return;
+      }
+      
+      // Update the events list
+      setEvents(prev => prev.map(e => e.id === updatedEvent.id ? { ...e, ...updatedEvent } : e));
+      
+      // If this is the current next event, update it immediately
+      if (nextEvent && nextEvent.id === updatedEvent.id) {
+        console.log('📱 Dashboard: Updating current next event with new route data');
+        setNextEvent(prev => ({ ...prev, ...updatedEvent }));
+      }
+    });
+
+    return () => {
+      routeUpdateListener.remove();
+    };
+  }, [nextEvent]);
+
+  // Helper function to safely get Date object from startTime
+  const getEventDate = (startTime) => {
+    if (!startTime) return null;
+    
+    try {
+      if (startTime.toDate && typeof startTime.toDate === 'function') {
+        return startTime.toDate();
+      } else if (startTime instanceof Date) {
+        return startTime;
+      } else if (typeof startTime === 'string' || typeof startTime === 'number') {
+        return new Date(startTime);
+      }
+      return null;
     } catch (error) {
-      console.error('Error loading next event:', error);
-      setNextEvent(null);
+      console.error('Error converting startTime to Date:', error);
+      return null;
     }
   };
 
-  const loadRecentEvents = async () => {
-    const currentUser = auth().currentUser;
-    if (!currentUser) return;
-
+  const getCurrentLocation = async () => {
     try {
-      // Load recent completed events from Firestore
-      let completedEvents = [];
-      try {
-        await firestore().enableNetwork();
-
-        // Try with orderBy first (requires index)
-        try {
-          const eventsSnapshot = await firestore()
-            .collection('events')
-            .where('userId', '==', currentUser.uid)
-            .where('status', '==', 'completed')
-            .orderBy('completedAt', 'desc')
-            .limit(10)
-            .get();
-
-          completedEvents = eventsSnapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-              id: doc.id,
-              ...data,
-              // Convert Firestore Timestamp to Date for completedAt
-              completedAt: data.completedAt?.toDate?.() || new Date(data.completedAt || Date.now()),
-              isLocal: false,
-            };
-          });
-          console.log('📊 Loaded', completedEvents.length, 'completed events from Firestore (with orderBy)');
-        } catch (indexError) {
-          // If orderBy fails (no index), get all completed events and sort client-side
-          console.log('⚠️ Firestore orderBy failed, fetching without orderBy:', indexError.code);
-          const eventsSnapshot = await firestore()
-            .collection('events')
-            .where('userId', '==', currentUser.uid)
-            .where('status', '==', 'completed')
-            .get();
-
-          completedEvents = eventsSnapshot.docs
-            .map(doc => {
-              const data = doc.data();
-              return {
-                id: doc.id,
-                ...data,
-                completedAt: data.completedAt?.toDate?.() || new Date(data.completedAt || Date.now()),
-                isLocal: false,
-              };
-            })
-            .sort((a, b) => b.completedAt - a.completedAt)
-            .slice(0, 10);
-          console.log('📊 Loaded', completedEvents.length, 'completed events from Firestore (client-side sort)');
-        }
-      } catch (firestoreError) {
-        if (firestoreError.code === 'unavailable' || firestoreError.code === 'deadline-exceeded') {
-          console.log('⚠️ Firestore temporarily unavailable for recent events:', firestoreError.message);
+      const location = await LocationService.getCurrentLocation();
+      if (location) {
+        setCurrentLocation(location);
+        // Reverse geocode to get address
+        const address = await GoogleMapsService.reverseGeocode(location.latitude, location.longitude);
+        if (address) {
+          setCurrentLocationName(address);
         } else {
-          console.log('❌ Firestore completed events unavailable:', firestoreError);
+          setCurrentLocationName(`${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`);
         }
+        return location;
       }
+      return null;
+    } catch (error) {
+      console.error('Error getting current location:', error);
+      setCurrentLocationName('Current Location');
+      return null;
+    }
+  };
 
-      // Load recent completed events from local storage
-      let localCompletedEvents = [];
-      try {
-        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        const localEventsData = await AsyncStorage.getItem('localEvents');
-        if (localEventsData) {
-          const parsedLocalEvents = JSON.parse(localEventsData);
-          console.log('📊 Total local events:', parsedLocalEvents.length);
-          const completedLocalEvents = parsedLocalEvents.filter(event => event.status === 'completed' && event.completedAt);
-          console.log('📊 Completed local events:', completedLocalEvents.length);
+  const loadEvents = async (location = null) => {
+    try {
+      // Use passed location or current state
+      const loc = location || currentLocation;
+      
+      console.log('📊 Dashboard loadEvents called with location:', loc ? `${loc.latitude},${loc.longitude}` : 'null');
+      
+      // Load events from Firestore - recent events for display, all events for stats
+      const currentUser = auth().currentUser;
+      if (!currentUser) return;
+      
+      const oneHourAgo = new Date();
+      oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+      const oneHourAgoTimestamp = firestore.Timestamp.fromDate(oneHourAgo);
+      
+      // Load recent events for display (same as calendar)
+      const recentEventsSnapshot = await firestore()
+        .collection('events')
+        .where('userId', '==', currentUser.uid)
+        .where('startTime', '>=', oneHourAgoTimestamp)
+        .orderBy('startTime')
+        .get();
+        
+      const eventsData = recentEventsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          startTime: getEventDate(data.startTime) || new Date()
+        };
+      });
 
-          localCompletedEvents = completedLocalEvents
-            .map(event => ({
-              ...event,
-              completedAt: new Date(event.completedAt),
-              startTime: { toDate: () => new Date(event.startTime) },
-              endTime: { toDate: () => new Date(event.endTime) },
-              isLocal: true,
-            }))
-            .sort((a, b) => b.completedAt - a.completedAt)
-            .slice(0, 10);
-          console.log('📊 Processed', localCompletedEvents.length, 'local completed events');
+      // Load all events for stats calculation (last 30 days)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const thirtyDaysAgoTimestamp = firestore.Timestamp.fromDate(thirtyDaysAgo);
+      
+      const allEventsSnapshot = await firestore()
+        .collection('events')
+        .where('userId', '==', currentUser.uid)
+        .where('startTime', '>=', thirtyDaysAgoTimestamp)
+        .orderBy('startTime')
+        .get();
+        
+      const allEventsData = allEventsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          startTime: getEventDate(data.startTime) || new Date()
+        };
+      });
+
+      setEvents(eventsData);
+      
+      // Find next upcoming event - prioritize events in "time-to-leave" status
+      const now = new Date();
+      let upcomingEvent = eventsData.find(event => event.status === 'time-to-leave') || 
+                         eventsData.find(event => event.startTime > now);
+      
+      console.log('📅 Dashboard next event:', upcomingEvent ? `${upcomingEvent.title} (origin: ${upcomingEvent.origin}, travelTime: ${upcomingEvent.travelTime})` : 'none');
+      
+      // Recalculate travel time for the next event to ensure accuracy
+      if (upcomingEvent && upcomingEvent.location && loc) {
+        try {
+          console.log(`🗺️ Dashboard: Recalculating travel time for ${upcomingEvent.title}`);
+          
+          let travelData;
+          if (upcomingEvent.origin && upcomingEvent.origin !== 'CURRENT_LOCATION') {
+            travelData = await GoogleMapsService.calculateTravelTime(
+              upcomingEvent.origin,
+              upcomingEvent.location,
+              upcomingEvent.startTime
+            );
+          } else {
+            travelData = await GoogleMapsService.calculateTravelTimeFromCurrentLocation(
+              upcomingEvent.location,
+              upcomingEvent.startTime
+            );
+          }
+          
+          console.log('🗺️ Dashboard: Travel data received:', travelData);
+          if (travelData && travelData.duration) {
+            console.log(`✅ Dashboard: Updated travel time from ${upcomingEvent.travelTime} to ${travelData.duration} minutes`);
+            upcomingEvent = {
+              ...upcomingEvent,
+              travelTime: travelData.duration
+            };
+          }
+        } catch (error) {
+          console.error('❌ Dashboard: Error calculating travel time for next event:', error);
         }
-      } catch (localError) {
-        console.log('Local completed events unavailable:', localError);
+      } else {
+        console.log('⚠️ Dashboard: Skipping travel time recalculation:', {
+          hasEvent: !!upcomingEvent,
+          hasLocation: !!upcomingEvent?.location,
+          hasCurrentLocation: !!loc
+        });
       }
+      
+      console.log('📅 Dashboard: Setting next event with travelTime:', upcomingEvent?.travelTime);
+      console.log('📅 Dashboard: Next event details:', {
+        title: upcomingEvent?.title,
+        location: upcomingEvent?.location,
+        startTime: upcomingEvent?.startTime,
+        travelTime: upcomingEvent?.travelTime,
+        status: upcomingEvent?.status
+      });
+      setNextEvent(upcomingEvent || null);
 
-      // Combine and set recent events
-      const allRecentEvents = [...completedEvents, ...localCompletedEvents]
-        .sort((a, b) => b.completedAt - a.completedAt)
-        .slice(0, 5);
+      // Get recent events (past 7 days) from all events for stats
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const recentEventsData = allEventsData
+        .filter(event => event.startTime >= weekAgo && event.startTime < now)
+        .slice(-5) // Last 5 events
+        .map(event => {
+          // Determine status based on event data
+          let status = 'success'; // Default
+          let points = 50; // Default points
+          
+          if (event.status === 'completed') {
+            if (event.arrivedOnTime === true) {
+              status = 'success';
+              points = 50;
+            } else if (event.arrivedOnTime === false) {
+              status = 'warning';
+              points = 10;
+            }
+          } else if (event.arrivedOnTime === true || event.wasEarly === true) {
+            status = 'success';
+            points = event.wasEarly ? 100 : 50;
+          } else if (event.arrivedOnTime === false) {
+            status = 'warning';
+            points = 10;
+          }
+          
+          return {
+            id: event.id,
+            title: event.title,
+            status: status,
+            time: formatTime(event.startTime),
+            points: points,
+            arrivedOnTime: event.arrivedOnTime,
+            wasEarly: event.wasEarly,
+          };
+        });
+      
+      setRecentEvents(recentEventsData);
 
-      setRecentEvents(allRecentEvents);
-      console.log('📊 Loaded recent events:', allRecentEvents.length);
-      allRecentEvents.forEach(event => console.log('  📊 Event:', event.title, 'Completed:', event.completedAt, 'On time:', event.arrivedOnTime));
+      // Calculate stats from all events (last 30 days)
+      const totalEvents = allEventsData.length;
+      // Count events with successful status (onTime, success, completed)
+      const onTimeEvents = allEventsData.filter(event => 
+        event.status === 'success' || 
+        event.status === 'onTime' || 
+        event.status === 'completed' ||
+        event.arrivedOnTime === true ||
+        event.arrivedEarly === true
+      ).length;
+      const punctualityRate = totalEvents > 0 ? Math.round((onTimeEvents / totalEvents) * 100) : 0;
+      
+      setStats(prevStats => ({
+        ...prevStats,
+        punctualityRate,
+        currentStreak: 12, // This would need to be calculated based on actual data
+        points: totalEvents * 50, // This would need to be calculated based on actual data
+      }));
 
     } catch (error) {
-      console.error('Error loading recent events:', error);
-      setRecentEvents([]);
+      console.error('Error loading events:', error);
     }
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([
-      loadUserData(), 
-      loadNextEvent(),
-      loadRecentEvents(),
-      syncCalendarData()
-    ]);
+    const location = await getCurrentLocation();
+    await loadUserStats(); // Reload user stats
+    await loadEvents(location);
     setRefreshing(false);
   };
 
-  const handleSettingsClick = async () => {
-    const newCount = settingsClickCount + 1;
-    setSettingsClickCount(newCount);
-    
-    if (newCount === 50) {
-      // Reset counter
-      setSettingsClickCount(0);
-      
-      try {
-        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        await AsyncStorage.setItem('phoneLockEnabled', 'false');
-        Alert.alert(
-          'Screen Lock Disabled', 
-          'Phone lock feature has been disabled. You can re-enable it in Settings.',
-          [{ text: 'OK', onPress: () => navigation.navigate('Settings') }]
-        );
-      } catch (error) {
-        console.error('Error disabling phone lock:', error);
-      }
-      return; // Don't navigate immediately after 50 clicks
-    } else if (newCount > 50) {
-      setSettingsClickCount(0);
-    }
-    
-    // Only navigate on single click (not during rapid clicking)
-    if (newCount === 1) {
-      setTimeout(() => {
-        // Check if still at 1 click after delay (means single click, not rapid)
-        if (settingsClickCount === 0) { // Will be 0 if no more clicks happened
-          navigation.navigate('Settings');
-        }
-      }, 300);
-    }
+  // Show achievement popup
+  const showAchievementPopup = (achievement) => {
+    Alert.alert(
+      '🏆 Achievement Unlocked!',
+      `${achievement.title}\n\n${achievement.description}\n\n+${achievement.xpReward} XP`,
+      [{ text: 'Awesome!', style: 'default' }]
+    );
   };
 
-  const handleTestEventCompletion = async () => {
-    try {
-      console.log('🧪 Testing event completion and points...');
-
-      // Award test points
-      const newPoints = await GamificationService.awardPoints(50, 'Test completion');
-
-      // Create a test recent event
-      const testEvent = {
-        id: 'test_' + Date.now(),
-        title: 'Test Event Completion',
-        startTime: { toDate: () => new Date() },
-        arrivedOnTime: true,
-        completedAt: new Date().toISOString(),
-      };
-
-      // Add to recent events
-      setRecentEvents(prev => [testEvent, ...prev.slice(0, 4)]);
-
-      // Update stats
-      setStats(prev => ({
-        ...prev,
-        points: newPoints,
-      }));
-
-      Alert.alert(
-        '✅ Test Complete!',
-        `Test event completed! You earned 50 XP points.\n\nTotal points: ${newPoints}`,
-        [{ text: 'Awesome!' }]
-      );
-
-      console.log('✅ Test completed successfully');
-    } catch (error) {
-      console.error('❌ Test failed:', error);
-      Alert.alert('Test Failed', 'Error during test: ' + error.message);
-    }
+  // Show level up popup
+  const showLevelUpPopup = (data) => {
+    Alert.alert(
+      '🎉 Level Up!',
+      `Congratulations! You've reached Level ${data.level}!\n\nYou now have ${data.xp} XP!`,
+      [{ text: 'Amazing!', style: 'default' }]
+    );
   };
 
-  const handleTestBadges = async () => {
-    try {
-      console.log('🎖️ Testing badge check...');
-
-      // Check and award badges
-      await GamificationService.checkAndAwardBadges();
-
-      // Reload user data to show new badges
-      await loadUserData();
-
-      Alert.alert(
-        '✅ Badge Check Complete!',
-        'Badge checking logic has been triggered. Check your Profile to see if you earned any new badges!',
-        [
-          { text: 'View Profile', onPress: () => navigation.navigate('Profile') },
-          { text: 'OK' }
-        ]
-      );
-
-      console.log('✅ Badge check completed');
-    } catch (error) {
-      console.error('❌ Badge check failed:', error);
-      Alert.alert('Badge Check Failed', 'Error: ' + error.message);
-    }
-  };
-
-  const handleTestNotifications = async () => {
-    console.log('🔔 ========== TEST NOTIFICATIONS BUTTON PRESSED ==========');
-    try {
-      console.log('🔔 Step 1: Starting notification system test...');
-
-      // Ensure NotificationService is configured
-      console.log('🔔 Step 2: Ensuring NotificationService is configured...');
-      await NotificationService.ensureConfigured();
-      console.log('🔔 Step 3: NotificationService configuration complete');
-
-      // First, check if notifications are enabled
-      console.log('🔔 Step 4: Checking notification permissions...');
-      const hasPermissions = await NotificationService.checkPermissions();
-      console.log('🔔 Step 5: Notification permissions result:', hasPermissions);
-
-      if (!hasPermissions) {
-        console.log('🔔 Permissions not granted, showing alert');
-        Alert.alert(
-          'Notifications Disabled',
-          'Please enable notifications in Settings to test.',
-          [{ text: 'Open Settings', onPress: () => navigation.navigate('Settings') }]
-        );
-        return;
-      }
-
-      // Test immediate notification using require without .default
-      console.log('🔔 Step 6: Loading PushNotification module...');
-      const PushNotification = require('react-native-push-notification');
-      console.log('🔔 Step 7: PushNotification module loaded:', typeof PushNotification);
-      console.log('🔔 Step 8: Sending immediate notification...');
-
-      PushNotification.localNotification({
-        channelId: 'reminders',
-        title: '🧪 Test Notification',
-        message: 'This is a test notification! If you see this, notifications are working.',
-        playSound: true,
-        vibrate: true,
-        userInfo: {
-          type: 'test',
-        },
-      });
-      console.log('🔔 Step 9: Immediate notification sent');
-
-      // Also schedule one for 5 seconds from now
-      console.log('🔔 Step 10: Scheduling notification for 5 seconds from now...');
-      PushNotification.localNotificationSchedule({
-        channelId: 'time-to-leave',
-        title: '🧪 Scheduled Test',
-        message: 'This notification was scheduled 5 seconds ago. Time-based notifications work!',
-        date: new Date(Date.now() + 5000),
-        allowWhileIdle: true,
-        playSound: true,
-        vibrate: true,
-        userInfo: {
-          type: 'test-scheduled',
-        },
-      });
-      console.log('🔔 Step 11: Scheduled notification sent');
-
-      console.log('🔔 Step 12: Showing success alert...');
-      Alert.alert(
-        '✅ Test Notifications Sent!',
-        'Two test notifications have been sent:\n\n1. Immediate notification (should appear now)\n2. Scheduled notification (in 5 seconds)\n\nCheck your notification tray and the Notifications screen in the app.',
-        [
-          { text: 'View Notifications', onPress: () => navigation.navigate('Notifications') },
-          { text: 'OK' }
-        ]
-      );
-
-      console.log('✅ Test notifications completed successfully');
-      console.log('🔔 ========================================================');
-    } catch (error) {
-      console.error('❌ Test notifications failed at some step');
-      console.error('❌ Error details:', error);
-      console.error('❌ Error message:', error.message);
-      console.error('❌ Error stack:', error.stack);
-      Alert.alert('Test Failed', 'Error: ' + error.message);
-      console.log('🔔 ========================================================');
-    }
+  const getEventStatusStyle = (status) => {
+    const statusMap = {
+      success: 'success',
+      onTime: 'success',
+      warning: 'warning',
+      late: 'warning',
+      danger: 'danger',
+      missed: 'danger',
+      'time-to-leave': 'danger', // Red card for time to leave
+      upcoming: 'info',
+    };
+    return statusMap[status] || 'neutral';
   };
 
   return (
     <View style={styles.container}>
-      <LinearGradient
-        colors={['#667eea', '#764ba2']}
-        style={styles.header}
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      
+      {/* Background: Photo at top, seamless fade to gradient */}
+      <ImageBackground
+        source={{ uri: backgroundImage }}
+        style={styles.backgroundImage}
+        imageStyle={styles.backgroundImageStyle}
       >
-        <View style={styles.headerContent}>
-          <View style={styles.headerLeft}>
-            <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
-              {user?.photoURL ? (
-                <Image source={{ uri: user.photoURL }} style={styles.profileImage} />
-              ) : (
-                <View style={styles.profilePlaceholder}>
-                  <Icon name="person" size={24} color="#fff" />
-                </View>
-              )}
-            </TouchableOpacity>
-            <View style={styles.greetingContainer}>
-              <Text style={styles.greeting} numberOfLines={1} ellipsizeMode="tail">
-                {greeting}, {user?.displayName?.split(' ')[0] || 'Hero'}! 👋
-              </Text>
-              <Text style={styles.date}>
-                {moment().format('dddd, MMMM D')}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.headerButtons}>
-            <TouchableOpacity 
-              onPress={handleSettingsClick} 
-              style={styles.headerButton}
-            >
-              <Icon name="settings" size={24} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => navigation.navigate('Notifications')}
-              style={styles.headerButton}
-            >
-              <Icon name="notifications" size={24} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </LinearGradient>
-
+        {/* Smooth fade overlay extending beyond image for seamless blend */}
+        <LinearGradient
+          colors={[
+            'rgba(0, 0, 0, 0)',      // Fully transparent at top
+            'rgba(0, 0, 0, 0)',      // Keep transparent for first 60% 
+            'rgba(0, 0, 0, 0.3)',    // Start fading
+            'rgba(0, 0, 0, 0.8)',    // More opaque
+            '#000',                   // Solid black at bottom
+          ]}
+          locations={[0, 0.6, 0.75, 0.9, 1]} // Control where each color appears
+          style={styles.imageFadeOverlay}
+        />
+        <LinearGradient
+          colors={fadeColors}
+          locations={fadeColors.map((_, index) => index / (fadeColors.length - 1))}
+          style={styles.gradientOverlay}
+        >
       <ScrollView
-        style={styles.content}
+            style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={['#667eea']}
-          />
-        }
-      >
-        {nextEvent && (
-          <NextEventCard
-            event={nextEvent}
-            onLeaveNow={() => navigation.navigate('PhoneLock', { event: nextEvent })}
-            onCardPress={(event) => navigation.navigate('EditEvent', { event })}
-            onStartJourney={(event) => navigation.navigate('JourneyOptions', { event })}
-          />
-        )}
+                tintColor={Colors.text.primary}
+              />
+            }
+          >
+            {/* Header - Simple text over photo */}
+            <View style={styles.header}>
+              <View style={styles.headerTop}>
+                <TouchableOpacity 
+                  style={styles.notificationBell}
+                  onPress={() => navigation.navigate('Notifications')}
+                  activeOpacity={0.7}
+                >
+                  <Icon name="notifications" size={24} color="#fff" />
+                  {notificationCount > 0 && (
+                    <View style={styles.notificationBadge}>
+                      <Text style={styles.notificationCount}>
+                        {notificationCount > 99 ? '99+' : notificationCount}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
+              <View style={styles.headerContent}>
+                <Text style={[Typography.caption, styles.timeOfDay, getTextShadow()]}>
+                  {timeOfDay.toUpperCase()}
+                </Text>
+                <Text style={[Typography.h2, styles.greeting, getTextShadow()]}>
+                  {greeting}, {userName}
+                </Text>
+                <Text style={[Typography.caption, styles.date, getSubtleTextShadow()]}>
+                  {formatDate(new Date())}
+                </Text>
+              </View>
+            </View>
 
-        <StreakWidget
-          streak={stats.currentStreak}
-          xpEarned={50}
-        />
+            {/* Main Stat - Glass card with punctuality */}
+            <View style={[createGlassCard('success', 'large'), styles.mainStatCard]}>
+              <Text style={[Typography.giant, styles.mainStat, getTextShadow()]}>
+                {stats.punctualityRate}%
+              </Text>
+              <Text style={[Typography.body, { color: Colors.text.secondary }]}>
+                On Time Rate
+              </Text>
+            </View>
 
-        <QuickStats
-          points={stats.points}
-          badges={stats.badges}
-          punctualityRate={stats.punctualityRate}
-          onCardPress={() => navigation.navigate('Profile')}
-        />
-
-        {/* Connection Status */}
-        {firestoreStatus === 'unavailable' && (
-          <View style={styles.connectionStatus}>
-            <Icon name="cloud-off" size={16} color="#ff6b6b" />
-            <Text style={styles.connectionStatusText}>
-              Working offline - some features may be limited
-            </Text>
-          </View>
-        )}
-
-        {/* Recent Activity Section */}
-        <View style={styles.recentActivity}>
-          <Text style={styles.sectionTitle}>Recent Activity</Text>
-          {recentEvents.length > 0 ? (
-            recentEvents.map((event, index) => (
-              <View key={event.id || index} style={[
-                styles.recentEventCard,
-                { backgroundColor: event.arrivedOnTime === true ? '#e8f5e8' : '#fff3cd' }
-              ]}>
-                <View style={styles.recentEventHeader}>
-                  <Text style={styles.recentEventTitle}>{event.title}</Text>
-                  <View style={[
-                    styles.statusBadge,
-                    { backgroundColor: event.arrivedOnTime === true ? '#28a745' : '#ffc107' }
-                  ]}>
-                    <Text style={styles.statusText}>
-                      {event.arrivedOnTime === true ? '✅ On Time' : '⚠️ Late'}
+            {/* Next Event - Status-based glass card */}
+            {nextEvent && nextEvent.startTime ? (
+              <TouchableOpacity 
+                style={[
+                  createGlassCard(getEventStatusStyle(nextEvent.status), 'large'),
+                  styles.nextEventCard
+                ]}
+                activeOpacity={0.7}
+                onPress={() => {
+                  // Convert Date objects to strings to avoid navigation serialization warning
+                  const serializableEvent = {
+                    ...nextEvent,
+                    startTime: (() => {
+                      const eventDate = getEventDate(nextEvent.startTime);
+                      return eventDate ? eventDate.toISOString() : new Date().toISOString();
+                    })()
+                  };
+                  navigation.navigate('EditEvent', { event: serializableEvent });
+                }}
+              >
+                <View style={styles.eventTimeRow}>
+                  <Text style={[Typography.massive, getTextShadow()]}>
+                    {(() => {
+                      const eventDate = getEventDate(nextEvent.startTime);
+                      return eventDate ? formatTime(eventDate) : 'N/A';
+                    })()}
+                  </Text>
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(nextEvent.status) }]}>
+                    <Text style={[Typography.small, { fontWeight: '600', color: '#FFFFFF' }]}>
+                      {nextEvent.status === 'time-to-leave' ? 'LEAVE NOW' : 
+                       nextEvent.status === 'completed' ? 'COMPLETED' : 'UPCOMING'}
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.recentEventTime}>
-                  {moment(event.startTime.toDate ? event.startTime.toDate() : event.startTime).format('MMM DD, HH:mm')}
+                
+                <Text style={[Typography.h3, styles.eventTitle, getSubtleTextShadow()]}>
+                  {nextEvent.title}
                 </Text>
-                {event.arrivedOnTime === true && (
-                  <Text style={styles.pointsEarned}>+50 XP earned!</Text>
-                )}
+                
+                {/* Event Date */}
+                <View style={styles.dateRow}>
+                  <Icon name="event" size={18} color={Colors.text.secondary} />
+                  <Text style={[Typography.body, { color: Colors.text.secondary, marginLeft: 6 }]}>
+                    {(() => {
+                      const eventDate = getEventDate(nextEvent.startTime);
+                      return eventDate ? formatDate(eventDate) : 'N/A';
+                    })()}
+                  </Text>
+                </View>
+                
+                <View style={styles.locationRow}>
+                  <Icon name="place" size={18} color={Colors.text.secondary} />
+                  <Text style={[Typography.body, { color: Colors.text.secondary, marginLeft: 6 }]}>
+                    {nextEvent.location}
+            </Text>
+          </View>
+
+                {/* From/To Route Information */}
+                <View style={styles.routeInfo}>
+                  <View style={styles.routeRow}>
+                    <Icon name="my-location" size={16} color={Colors.status.success.solid} />
+                    <Text style={[Typography.caption, { color: Colors.text.secondary, marginLeft: 6, flex: 1 }]}>
+                      From: {nextEvent.origin === 'CURRENT_LOCATION' ? currentLocationName : (nextEvent.origin || currentLocationName)}
+                    </Text>
+                  </View>
+                  <View style={styles.routeRow}>
+                    <Icon name="place" size={16} color={Colors.status.info.solid} />
+                    <Text style={[Typography.caption, { color: Colors.text.secondary, marginLeft: 6, flex: 1 }]}>
+                      To: {nextEvent.location}
+                    </Text>
+                </View>
+                  <View style={styles.routeRow}>
+                    <Icon name="access-time" size={16} color={Colors.status.warning.solid} />
+                    <Text style={[Typography.caption, { color: Colors.text.secondary, marginLeft: 6 }]}>
+                      ETA: {(() => {
+                        const eventDate = getEventDate(nextEvent.startTime);
+                        return eventDate ? formatTime(eventDate) : 'N/A';
+                      })()}
+                </Text>
               </View>
-            ))
-          ) : (
-            <View style={styles.emptyRecentActivity}>
-              <Text style={styles.emptyRecentText}>
-                No recent events yet. Complete an event to see your activity here!
+                  <View style={styles.routeRow}>
+                    <Icon name={nextEvent.transportationMode === 'walking' ? 'directions-walk' : 
+                              nextEvent.transportationMode === 'bicycling' ? 'directions-bike' :
+                              nextEvent.transportationMode === 'transit' ? 'directions-transit' : 'directions-car'} 
+                          size={16} color={Colors.status.info.solid} />
+                    <Text style={[Typography.caption, { color: Colors.text.secondary, marginLeft: 6 }]}>
+                      Travel Time: {nextEvent.travelTime || 15} min {nextEvent.transportationMode ? `(${nextEvent.transportationMode})` : ''}
+                </Text>
+              </View>
+                </View>
+
+                {/* Departure and Get Ready Times */}
+                <View style={styles.timingInfo}>
+                  <View style={styles.timingRow}>
+                    <Icon name="schedule" size={16} color={Colors.status.warning.solid} />
+                    <Text style={[Typography.caption, { color: Colors.text.secondary, marginLeft: 6 }]}>
+                      Get Ready: {(() => {
+                        const eventDate = getEventDate(nextEvent.startTime);
+                        return eventDate ? formatTime(new Date(eventDate.getTime() - (nextEvent.travelTime || 30) * 60000 - 30 * 60000)) : 'N/A';
+                      })()}
               </Text>
             </View>
-          )}
+                  <View style={styles.timingRow}>
+                    <Icon name="directions" size={16} color={Colors.status.info.solid} />
+                    <Text style={[Typography.caption, { color: Colors.text.secondary, marginLeft: 6 }]}>
+                      Depart: {(() => {
+                        const eventDate = getEventDate(nextEvent.startTime);
+                        return eventDate ? formatTime(new Date(eventDate.getTime() - (nextEvent.travelTime || 30) * 60000)) : 'N/A';
+                      })()}
+                    </Text>
+                  </View>
         </View>
 
-        <View style={styles.quickActions}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.actionButtons}>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => navigation.navigate('Calendar')}
-            >
-              <LinearGradient
-                colors={['#f093fb', '#f5576c']}
-                style={styles.actionGradient}
-              >
-                <Icon name="event" size={24} color="#fff" />
-                <Text style={styles.actionText}>View Calendar</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.startRouteButton}
+                  onPress={() => {
+                    // Convert Date objects to strings to avoid navigation serialization warning
+                    const serializableEvent = {
+                      ...nextEvent,
+                      startTime: (() => {
+                        const eventDate = getEventDate(nextEvent.startTime);
+                        return eventDate ? eventDate.toISOString() : new Date().toISOString();
+                      })()
+                    };
+                    navigation.navigate('JourneyOptions', { event: serializableEvent });
+                  }}
+                >
+                  <Icon name="navigation" size={20} color={Colors.text.primary} />
+                  <Text style={[Typography.body, { marginLeft: 8, fontWeight: '600' }]}>
+                    Start Navigation
+                  </Text>
+                </TouchableOpacity>
 
+                {/* Leave Now Button - only show for time-to-leave events */}
+                {nextEvent.status === 'time-to-leave' && (
+                  <TouchableOpacity 
+                    style={[styles.startRouteButton, { backgroundColor: Colors.status.danger.solid, marginTop: Spacing.sm }]}
+                    onPress={() => {
+                      navigation.navigate('PhoneLock', { eventId: nextEvent.id });
+                    }}
+                  >
+                    <Icon name="directions-run" size={20} color="#FFFFFF" />
+                    <Text style={[Typography.body, { marginLeft: 8, fontWeight: '600', color: '#FFFFFF' }]}>
+                      Leave Now
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <View style={[createGlassCard('info', 'large'), styles.nextEventCard]}>
+                <View style={{ alignItems: 'center' }}>
+                  <Icon name="event" size={48} color={Colors.text.secondary} />
+                  <Text style={[Typography.h3, { color: Colors.text.secondary, marginTop: Spacing.md, textAlign: 'center' }]}>
+                    No Upcoming Events
+                  </Text>
             <TouchableOpacity
-              style={styles.actionButton}
+                    style={styles.startRouteButton}
               onPress={() => navigation.navigate('AddEvent')}
             >
-              <LinearGradient
-                colors={['#4facfe', '#00f2fe']}
-                style={styles.actionGradient}
-              >
-                <Icon name="add-circle" size={24} color="#fff" />
-                <Text style={styles.actionText}>Add Event</Text>
-              </LinearGradient>
+                    <Icon name="add" size={20} color={Colors.text.primary} />
+                    <Text style={[Typography.body, { marginLeft: 8, fontWeight: '600' }]}>
+                      Add Your First Event
+                    </Text>
             </TouchableOpacity>
           </View>
         </View>
+            )}
 
-        {/* Test Section */}
-        <View style={styles.testSection}>
-          <Text style={styles.testSectionTitle}>🧪 Testing Tools</Text>
+            {/* Quick Stats - Glass cards in row */}
+            <View style={styles.statsRow}>
+              <View style={[adaptiveStyles.adaptiveGlassCard, styles.statCard]}>
+                <Icon name="local-fire-department" size={28} color={Colors.status.warning.solid} />
+                <Text style={[Typography.h2, styles.statValue, getSubtleTextShadow()]}>
+                  {stats.currentStreak}
+                </Text>
+                <Text style={[Typography.caption, styles.statLabel]}>
+                  Day Streak
+                </Text>
+              </View>
+
+              <View style={[adaptiveStyles.adaptiveGlassCard, styles.statCard]}>
+                <Icon name="stars" size={28} color={Colors.accent.gold} />
+                <Text style={[Typography.h2, styles.statValue, getSubtleTextShadow()]}>
+                  {stats.points}
+                </Text>
+                <Text style={[Typography.caption, styles.statLabel]}>
+                  Total Points
+                </Text>
+                <Text style={[Typography.small, { color: Colors.text.tertiary, marginTop: 2 }]}>
+                  {stats.xpForNextLevel} to next level
+                </Text>
+              </View>
+
+              <View style={[adaptiveStyles.adaptiveGlassCard, styles.statCard]}>
+                <Icon name="emoji-events" size={28} color={Colors.status.info.solid} />
+                <Text style={[Typography.h2, styles.statValue, getSubtleTextShadow()]}>
+                  {stats.level}
+                </Text>
+                <Text style={[Typography.caption, styles.statLabel]}>
+                  Level
+                </Text>
+              </View>
+            </View>
+
+            {/* Quick Actions - Glass card */}
+            <View style={[adaptiveStyles.adaptiveGlassCard, styles.quickActionsCard]}>
+              <View style={styles.actionsRow}>
           <TouchableOpacity
-            style={styles.testButton}
-            onPress={handleTestEventCompletion}
-          >
-            <LinearGradient
-              colors={['#ff9a9e', '#fecfef']}
-              style={styles.testGradient}
-            >
-              <Icon name="star" size={20} color="#fff" />
-              <Text style={styles.testButtonText}>Test Points & Recent Activity</Text>
-            </LinearGradient>
+                  style={styles.actionButton}
+                  onPress={() => navigation.navigate('AddEvent')}
+                >
+                  <Icon name="add-circle-outline" size={32} color={Colors.text.primary} />
+                  <Text style={[Typography.caption, styles.actionText, getSubtleTextShadow()]}>
+                    Add Event
+                  </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.testButton, { marginTop: 10 }]}
-            onPress={handleTestBadges}
-          >
-            <LinearGradient
-              colors={['#a8edea', '#fed6e3']}
-              style={styles.testGradient}
-            >
-              <Icon name="emoji-events" size={20} color="#fff" />
-              <Text style={styles.testButtonText}>Check for New Badges</Text>
-            </LinearGradient>
+                  style={styles.actionButton}
+                  onPress={() => navigation.navigate('Calendar')}
+                >
+                  <Icon name="calendar-today" size={32} color={Colors.text.primary} />
+                  <Text style={[Typography.caption, styles.actionText, getSubtleTextShadow()]}>
+                    Calendar
+                  </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.testButton, { marginTop: 10 }]}
-            onPress={handleTestNotifications}
-          >
-            <LinearGradient
-              colors={['#667eea', '#764ba2']}
-              style={styles.testGradient}
-            >
-              <Icon name="notifications-active" size={20} color="#fff" />
-              <Text style={styles.testButtonText}>Test Notifications</Text>
-            </LinearGradient>
+                  style={styles.actionButton}
+                  onPress={() => navigation.navigate('Profile')}
+                >
+                  <Icon name="emoji-events" size={32} color={Colors.text.primary} />
+                  <Text style={[Typography.caption, styles.actionText, getSubtleTextShadow()]}>
+                    Achievements
+                  </Text>
           </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={onRefresh}
+        >
+          <Icon name="refresh" size={32} color={Colors.text.primary} />
+          <Text style={[Typography.caption, styles.actionText, getSubtleTextShadow()]}>
+            Refresh
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: Colors.status.danger + '20' }]}
+          onPress={() => {
+            console.log('🧪 Dashboard: Testing reset directly...');
+            DeviceEventEmitter.emit('STATS_RESET');
+            DeviceEventEmitter.emit('POINTS_UPDATED', {
+              points: 0,
+              level: 1,
+              currentStreak: 0,
+              xpForNextLevel: 100,
+            });
+          }}
+        >
+          <Icon name="restore" size={32} color={Colors.status.danger} />
+          <Text style={[Typography.caption, styles.actionText, getSubtleTextShadow()]}>
+            Test Reset
+          </Text>
+        </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Recent Activity - Glass cards with status colors */}
+            <View style={styles.recentSection}>
+              <Text style={[Typography.h4, styles.sectionTitle, getSubtleTextShadow()]}>
+                Recent Activity
+              </Text>
+              
+              {recentEvents.length > 0 ? (
+                recentEvents.map((event) => (
+                  <View 
+                    key={event.id}
+                    style={[
+                      createGlassCard(event.status),
+                      styles.activityCard
+                    ]}
+                  >
+                    <Icon 
+                      name={event.status === 'success' ? 'check-circle' : 'warning'}
+                      size={24} 
+                      color={getStatusColor(event.status)}
+                      style={styles.activityIcon}
+                    />
+                    <View style={styles.activityContent}>
+                      <Text style={[Typography.body, { color: Colors.text.primary }]}>
+                        {event.status === 'success' 
+                          ? (event.wasEarly ? 'Arrived early to ' : 'Arrived on time to ')
+                          : 'Arrived late to '}
+                        {event.title}
+                      </Text>
+                      <Text style={[Typography.small, { color: Colors.text.tertiary, marginTop: 4 }]}>
+                        {event.time} • {event.points > 0 ? '+' : ''}{event.points} points
+                      </Text>
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <View style={[createGlassCard('neutral'), styles.activityCard]}>
+                  <Icon 
+                    name="history"
+                    size={24} 
+                    color={Colors.text.tertiary}
+                    style={styles.activityIcon}
+                  />
+                  <View style={styles.activityContent}>
+                    <Text style={[Typography.body, { color: Colors.text.secondary }]}>
+                      No recent activity
+                    </Text>
+                    <Text style={[Typography.small, { color: Colors.text.tertiary, marginTop: 4 }]}>
+                      Your event history will appear here
+                    </Text>
+                  </View>
+                </View>
+              )}
         </View>
 
       </ScrollView>
+        </LinearGradient>
+      </ImageBackground>
     </View>
   );
 };
 
+// Helper function to create adaptive glass card styles
+const createAdaptiveStyles = (adaptiveGlass) => StyleSheet.create({
+  adaptiveGlassCard: {
+    backgroundColor: adaptiveGlass.medium,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.lg,
+    borderWidth: 1,
+    borderColor: adaptiveGlass.border,
+  },
+});
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f7fa',
+    backgroundColor: '#000',
   },
-  header: {
-    paddingTop: 50,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
-  },
-  headerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  backgroundImage: {
     flex: 1,
-    marginRight: 20,
+    width: '100%',
+    height: '100%',
   },
-  profileImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    marginRight: 15,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
+  backgroundImageStyle: {
+    height: height * 0.5, // Photo visible in top 50%
+    resizeMode: 'cover',
+    opacity: 0.9, // Slight transparency for better blend
   },
-  profilePlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 15,
+  imageFadeOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: height * 0.5, // Same height as the image
   },
-  greetingContainer: {
+  gradientOverlay: {
     flex: 1,
   },
-  headerButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 15,
-  },
-  headerButton: {
-    padding: 4,
-  },
-  greeting: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 5,
-  },
-  date: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.9)',
-  },
-  content: {
+  scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 20,
-    marginTop: -10,
-    paddingBottom: 100, // Add extra padding to prevent cut-off
+    paddingTop: 60,
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: 100,
   },
-  quickActions: {
-    marginTop: 20,
+
+  // Header
+  header: {
+    marginBottom: Spacing.xxxl,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15,
-  },
-  actionButtons: {
+  headerTop: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
+    alignItems: 'flex-start',
+    marginBottom: Spacing.md,
   },
-  actionButton: {
-    flex: 1,
-    marginHorizontal: 5,
+  headerContent: {
+    // Content block for greeting and date
   },
-  actionGradient: {
-    padding: 20,
-    borderRadius: 15,
+  timeOfDay: {
+    color: Colors.text.secondary,
+    marginBottom: Spacing.xs,
+    letterSpacing: 2,
+  },
+  greeting: {
+    marginBottom: Spacing.xs,
+  },
+  date: {
+    color: Colors.text.tertiary,
+  },
+  notificationBell: {
+    position: 'relative',
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: '#FF4444',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
   },
-  actionText: {
+  notificationCount: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: 'bold',
-    marginTop: 5,
+    textAlign: 'center',
   },
-  testSection: {
-    marginTop: 15,
-    paddingHorizontal: 20,
+
+  // Main Stat Card
+  mainStatCard: {
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
   },
-  testSectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
+  mainStat: {
+    marginBottom: Spacing.xs,
   },
-  testButton: {
-    borderRadius: 15,
-    overflow: 'hidden',
+
+  // Next Event Card
+  nextEventCard: {
+    marginBottom: Spacing.xl,
   },
-  testGradient: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+  eventTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  statusBadge: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.full,
+  },
+  eventTitle: {
+    marginBottom: Spacing.sm,
+  },
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  routeInfo: {
+    marginBottom: Spacing.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: BorderRadius.sm,
+    padding: Spacing.sm,
+  },
+  routeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.xs,
+  },
+  timingInfo: {
+    marginBottom: Spacing.lg,
+  },
+  timingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.xs,
+  },
+  startRouteButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.base,
+    marginTop: Spacing.sm,
   },
-  testButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-  recentActivity: {
-    marginTop: 30,
-    marginBottom: 20,
-  },
-  recentEventCard: {
-    backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  recentEventHeader: {
+
+  // Stats Row
+  statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 5,
+    gap: Spacing.md,
+    marginBottom: Spacing.xl,
   },
-  recentEventTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
+  statCard: {
     flex: 1,
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  recentEventTime: {
-    color: '#666',
-    fontSize: 14,
-    marginBottom: 5,
-  },
-  pointsEarned: {
-    color: '#28a745',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  connectionStatus: {
-    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff3cd',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 15,
-    borderLeftWidth: 4,
-    borderLeftColor: '#ff6b6b',
   },
-  connectionStatusText: {
-    marginLeft: 8,
-    color: '#856404',
-    fontSize: 14,
-    fontWeight: '500',
+  statValue: {
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xs,
   },
-  emptyRecentActivity: {
-    backgroundColor: '#f8f9fa',
-    padding: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    borderStyle: 'dashed',
-  },
-  emptyRecentText: {
-    color: '#6c757d',
-    fontSize: 14,
+  statLabel: {
+    color: Colors.text.tertiary,
     textAlign: 'center',
-    fontStyle: 'italic',
   },
-  activityItem: {
+
+  // Quick Actions
+  quickActionsCard: {
+    marginBottom: Spacing.xl,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  actionButton: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  actionText: {
+    marginTop: Spacing.sm,
+    color: Colors.text.primary,
+  },
+
+  // Recent Activity
+  recentSection: {
+    marginTop: Spacing.lg,
+  },
+  sectionTitle: {
+    marginBottom: Spacing.lg,
+    letterSpacing: 0.5,
+  },
+  activityCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 10,
+    marginBottom: Spacing.md,
   },
-  activityText: {
+  activityIcon: {
+    marginRight: Spacing.md,
+  },
+  activityContent: {
     flex: 1,
-    marginLeft: 10,
-    color: '#333',
-    fontSize: 14,
-  },
-  activityTime: {
-    color: '#999',
-    fontSize: 12,
   },
 });
 

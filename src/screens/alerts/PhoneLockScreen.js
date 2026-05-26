@@ -8,21 +8,75 @@ import {
   TextInput,
   Alert,
   Vibration,
+  ActivityIndicator,
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import firestore from '@react-native-firebase/firestore';
 // import BackgroundTimer from 'react-native-background-timer';
 import LockService from '../../services/LockService';
 import HapticFeedback from 'react-native-haptic-feedback';
 
 const PhoneLockScreen = ({ route, navigation }) => {
-  const { event } = route.params;
+  const { eventId } = route.params;
+  const [event, setEvent] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [countdown, setCountdown] = useState('');
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [emergencyPin, setEmergencyPin] = useState('');
   const [attempts, setAttempts] = useState(0);
 
+  // Helper function to safely get event time
+  const getEventTime = () => {
+    if (event.startTime && typeof event.startTime.toDate === 'function') {
+      // Firestore timestamp
+      return new Date(event.startTime.toDate());
+    } else if (event.startTime) {
+      // Regular Date object or ISO string
+      return new Date(event.startTime);
+    } else {
+      console.error('Invalid event startTime:', event.startTime);
+      return new Date();
+    }
+  };
+
+  // Load event data from Firestore
   useEffect(() => {
+    const loadEvent = async () => {
+      try {
+        console.log('🔒 PhoneLockScreen: Loading event with ID:', eventId);
+        const eventDoc = await firestore().collection('events').doc(eventId).get();
+        
+        if (eventDoc.exists) {
+          const eventData = {
+            id: eventDoc.id,
+            ...eventDoc.data(),
+            startTime: eventDoc.data().startTime?.toDate() || new Date(eventDoc.data().startTime)
+          };
+          setEvent(eventData);
+          console.log('🔒 PhoneLockScreen: Event loaded successfully:', eventData.title);
+        } else {
+          console.error('🔒 PhoneLockScreen: Event not found with ID:', eventId);
+          Alert.alert('Error', 'Event not found. Returning to dashboard.', [
+            { text: 'OK', onPress: () => navigation.navigate('MainTabs') }
+          ]);
+        }
+      } catch (error) {
+        console.error('🔒 PhoneLockScreen: Error loading event:', error);
+        Alert.alert('Error', 'Failed to load event. Returning to dashboard.', [
+          { text: 'OK', onPress: () => navigation.navigate('MainTabs') }
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadEvent();
+  }, [eventId, navigation]);
+
+  useEffect(() => {
+    if (!event) return;
+
     // Start lock service
     LockService.startLockMode(event, handleUnlock);
     
@@ -35,11 +89,11 @@ const PhoneLockScreen = ({ route, navigation }) => {
     return () => {
       clearInterval(countdownInterval);
     };
-  }, []);
+  }, [event]);
 
   const startCountdown = () => {
     countdownInterval = setInterval(() => {
-      const eventTime = new Date(event.startTime.toDate());
+      const eventTime = getEventTime();
       const now = new Date();
       const diff = eventTime - now;
 
@@ -60,7 +114,7 @@ const PhoneLockScreen = ({ route, navigation }) => {
     // Navigate based on unlock reason
     if (reason === 'Manual arrival confirmation' || reason === 'Arrived at location') {
       // Check if arrived on time
-      const eventTime = new Date(event.startTime.toDate());
+      const eventTime = getEventTime();
       const now = new Date();
       const isOnTime = now <= eventTime;
       
@@ -98,7 +152,7 @@ const PhoneLockScreen = ({ route, navigation }) => {
     HapticFeedback.trigger('impactLight');
 
     // Check if user arrived on time
-    const eventTime = new Date(event.startTime.toDate());
+    const eventTime = getEventTime();
     const now = new Date();
     const isOnTime = now <= eventTime; // Arrived before or at event time
 
@@ -146,6 +200,39 @@ const PhoneLockScreen = ({ route, navigation }) => {
       Alert.alert('Error', 'Failed to verify PIN. Please try again.');
     }
   };
+
+  if (loading) {
+    return (
+      <LinearGradient
+        colors={['#232526', '#414345']}
+        style={styles.container}
+      >
+        <View style={styles.content}>
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={styles.title}>Loading Event...</Text>
+        </View>
+      </LinearGradient>
+    );
+  }
+
+  if (!event) {
+    return (
+      <LinearGradient
+        colors={['#232526', '#414345']}
+        style={styles.container}
+      >
+        <View style={styles.content}>
+          <Text style={styles.title}>Event Not Found</Text>
+          <TouchableOpacity
+            style={styles.leaveButton}
+            onPress={() => navigation.navigate('MainTabs')}
+          >
+            <Text style={styles.leaveButtonText}>Return to Dashboard</Text>
+          </TouchableOpacity>
+        </View>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient

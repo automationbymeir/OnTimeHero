@@ -71,6 +71,20 @@ class NotificationService {
           // Handle notification tap
           if (notification.userInteraction) {
             NotificationService.handleNotificationTap(notification);
+          } else {
+            // Auto-react to critical notifications (time-to-leave)
+            const type = notification.userInfo?.type || notification.data?.type;
+            if (type === 'time-to-leave') {
+              try {
+                const { DeviceEventEmitter } = require('react-native');
+                DeviceEventEmitter.emit('TIME_TO_LEAVE', {
+                  eventId: notification.userInfo?.eventId || notification.data?.eventId,
+                  eventTitle: notification.title || notification.userInfo?.eventTitle || notification.data?.eventTitle,
+                });
+              } catch (e) {
+                console.log('Could not emit TIME_TO_LEAVE event:', e);
+              }
+            }
           }
         },
 
@@ -265,8 +279,28 @@ class NotificationService {
       await this.ensureConfigured();
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
 
+      console.log(`\n📅 ========== SCHEDULING NOTIFICATIONS ==========`);
+      console.log(`📅 Event ID: ${event.id}`);
+      console.log(`📅 Event object:`, JSON.stringify({
+        id: event.id,
+        title: event.title,
+        startTime: event.startTime,
+        travelTime: event.travelTime,
+        location: event.location,
+        origin: event.origin,
+        status: event.status
+      }, null, 2));
+
+      // Cancel existing notifications for this event to prevent duplicates
+      await this.cancelEventNotifications(event.id);
+      console.log(`🗑️ Cancelled existing notifications for event: ${event.id}`);
+
       // Get the event's travel time (in minutes) - this is calculated from Google Maps when available
       const travelTime = event.travelTime || 15; // Default to 15 minutes if not specified
+      
+      if (!event.travelTime) {
+        console.warn(`⚠️ Event "${event.title}" has no travelTime property, using default 15 minutes`);
+      }
 
       // Get user preference for prep time (how early before leaving to get ready)
       const prepTimeMinutes = await AsyncStorage.getItem('reminder1Minutes');
@@ -275,11 +309,10 @@ class NotificationService {
       const eventTime = moment(event.startTime.toDate ? event.startTime.toDate() : event.startTime);
       const now = moment();
 
-      console.log(`\n📅 ========== SCHEDULING NOTIFICATIONS ==========`);
       console.log(`📅 Event: ${event.title}`);
       console.log(`📅 Event time: ${eventTime.format('YYYY-MM-DD HH:mm')}`);
       console.log(`📅 Current time: ${now.format('YYYY-MM-DD HH:mm')}`);
-      console.log(`📅 Travel time: ${travelTime} minutes (${travelTime > 15 ? 'from Google Maps' : 'default'})`);
+      console.log(`📅 Travel time: ${travelTime} minutes (${travelTime > 15 ? 'from Google Maps or user input' : 'default'})`);
       console.log(`📅 Prep time: ${prepTime} minutes`);
 
       // Calculate departure time (event time - travel time)
@@ -321,12 +354,15 @@ class NotificationService {
           id: notificationId1,
           channelId: 'reminders',
           title: '📅 Get Ready!',
-          message: `Start getting ready for ${event.title}. You need to leave in ${timeUntilLeave} minutes (at ${departureTime.format('h:mm A')}).`,
+          message: `Start getting ready for ${event.title}. You need to leave in ${timeUntilLeave} minutes (at ${departureTime.format('h:mm A')}) by ${event.transportationMode || 'driving'}.`,
           date: notificationTime,
           allowWhileIdle: true,
           playSound: true,
           soundName: 'default',
           vibrate: true,
+          importance: 4,
+          priority: 'high',
+          smallIcon: 'ic_launcher',
           userInfo: {
             eventId: event.id,
             type: 'get-ready',
@@ -334,6 +370,7 @@ class NotificationService {
             departureTime: departureTime.format('h:mm A'),
           },
         });
+        console.log(`✅ "Get Ready" notification CREATED successfully [ID: ${notificationId1}]`);
       } else {
         console.log(`⏭️ Skipping get ready notification (departure time has passed)`);
       }
@@ -369,13 +406,17 @@ class NotificationService {
           id: notificationId2,
           channelId: 'time-to-leave',
           title: '⏰ Time to Leave NOW!',
-          message: `Leave now for ${event.title}${event.location ? ` at ${event.location}` : ''}! ${travelTime > 15 ? `Travel time: ${travelTime} min (based on current traffic).` : `Travel time: ${travelTime} min.`}`,
+          message: `Leave now for ${event.title}${event.location ? ` at ${event.location}` : ''}! ${travelTime > 15 ? `Travel time: ${travelTime} min (${event.transportationMode || 'driving'})` : `Travel time: ${travelTime} min (${event.transportationMode || 'driving'})`}`,
           date: notificationTime,
           allowWhileIdle: true,
           playSound: true,
           soundName: 'default',
           vibrate: true,
           vibration: 1000,
+          importance: 5,
+          priority: 'max',
+          fullScreenIntent: true,
+          smallIcon: 'ic_launcher',
           userInfo: {
             eventId: event.id,
             type: 'time-to-leave',
@@ -385,13 +426,43 @@ class NotificationService {
           },
           actions: ['Leave Now', 'Snooze 5 min'],
         });
+        console.log(`✅ "Time to Leave" notification CREATED successfully [ID: ${notificationId2}]`);
       } else {
         console.log(`⏭️ Skipping "Time to Leave" notification (event already started)`);
       }
+      
+      // List all scheduled notifications for verification
+      console.log(`📅 Verifying scheduled notifications...`);
+      this.getScheduledNotifications().then(notifications => {
+        const eventNotifications = notifications.filter(n => n.userInfo?.eventId === event.id);
+        console.log(`📅 Found ${eventNotifications.length} scheduled notifications for this event:`);
+        eventNotifications.forEach(n => {
+          const scheduledDate = new Date(n.date);
+          console.log(`  - Type: ${n.userInfo?.type}, Scheduled for: ${moment(scheduledDate).format('YYYY-MM-DD HH:mm:ss')}`);
+        });
+      }).catch(err => {
+        console.warn('Could not verify scheduled notifications:', err);
+      });
+      
+      // Mark that notifications have been scheduled for this event
+      await this.markNotificationsScheduled(event.id);
+      
       console.log(`📅 ===============================================\n`);
     } catch (error) {
       console.error('❌ Error scheduling event notifications:', error);
+      console.error('❌ Error stack:', error.stack);
       console.log(`📅 ===============================================\n`);
+    }
+  }
+
+  async markNotificationsScheduled(eventId) {
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const scheduledKey = `notifications_scheduled_${eventId}`;
+      await AsyncStorage.setItem(scheduledKey, new Date().toISOString());
+      console.log(`✅ Marked notifications as scheduled for event: ${eventId}`);
+    } catch (error) {
+      console.error('Error marking notifications as scheduled:', error);
     }
   }
 
@@ -416,6 +487,14 @@ class NotificationService {
 
       await AsyncStorage.setItem('userNotifications', JSON.stringify(trimmed));
       console.log('✅ Notification saved to history:', notification.title);
+      
+      // Emit event to update notification count
+      try {
+        const { DeviceEventEmitter } = require('react-native');
+        DeviceEventEmitter.emit('NOTIFICATION_RECEIVED', { notification });
+      } catch (e) {
+        console.log('Could not emit NOTIFICATION_RECEIVED event:', e);
+      }
     } catch (error) {
       console.error('Error saving notification to history:', error);
     }
@@ -591,15 +670,22 @@ class NotificationService {
     });
   }
 
-  cancelEventNotifications(eventId) {
-    const notifications = this.getScheduledNotifications();
-    notifications.then(scheduledNotifications => {
+  async cancelEventNotifications(eventId) {
+    try {
+      const scheduledNotifications = await this.getScheduledNotifications();
+      let cancelledCount = 0;
+      
       scheduledNotifications.forEach(notification => {
         if (notification.userInfo?.eventId === eventId) {
           this.cancelNotification(notification.id);
+          cancelledCount++;
         }
       });
-    });
+      
+      console.log(`🗑️ Cancelled ${cancelledCount} existing notifications for event: ${eventId}`);
+    } catch (error) {
+      console.error('Error cancelling event notifications:', error);
+    }
   }
 
   getScheduledNotifications() {

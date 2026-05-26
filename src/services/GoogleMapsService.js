@@ -54,6 +54,24 @@ class GoogleMapsService {
     }
   }
 
+  getCountryFromLocation(location) {
+    const { latitude, longitude } = location;
+
+    if (latitude >= 29.5 && latitude <= 33.3 && longitude >= 34.2 && longitude <= 35.9) {
+      return 'Israel';
+    } else if (latitude >= 25 && latitude <= 50 && longitude >= -125 && longitude <= -65) {
+      return 'USA';
+    } else if (latitude >= 49.9 && latitude <= 58.7 && longitude >= -8 && longitude <= 1.8) {
+      return 'UK';
+    } else if (latitude >= 41 && latitude <= 51.2 && longitude >= -5.2 && longitude <= 9.6) {
+      return 'France';
+    } else if (latitude >= 47 && latitude <= 55.1 && longitude >= 5.9 && longitude <= 15.1) {
+      return 'Germany';
+    }
+
+    return 'Unknown';
+  }
+
   async setHomeAddress(address) {
     try {
       await AsyncStorage.setItem('homeAddress', address);
@@ -264,7 +282,7 @@ class GoogleMapsService {
   /**
    * Get autocomplete predictions for a location search query
    */
-  async getPlacePredictions(input) {
+  async getPlacePredictions(input, userLocation = null) {
     console.log('🔍 Getting place predictions for:', input);
     console.log('🔑 API Key set:', !!this.apiKey);
     console.log('🔑 API Key starts with:', this.apiKey ? this.apiKey.substring(0, 10) + '...' : 'None');
@@ -275,9 +293,17 @@ class GoogleMapsService {
     }
 
     try {
+      // Use user location for better bias if available
+      let locationBias = 'ipbias';
+      if (userLocation && userLocation.latitude && userLocation.longitude) {
+        // Use a smaller radius (20km) for more relevant results
+        locationBias = `circle:20000@${userLocation.latitude},${userLocation.longitude}`;
+        console.log('📍 Using user location for bias:', userLocation);
+      }
+
       // Query both exact addresses and cities, then merge unique results
-      const urlAddress = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&types=address&inputtype=textquery&locationbias=ipbias&key=${this.apiKey}`;
-      const urlCities = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&types=(cities)&inputtype=textquery&locationbias=ipbias&key=${this.apiKey}`;
+      const urlAddress = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&types=address&inputtype=textquery&locationbias=${locationBias}&language=en&key=${this.apiKey}`;
+      const urlCities = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&types=(cities)&inputtype=textquery&locationbias=${locationBias}&language=en&key=${this.apiKey}`;
 
       const [respAddress, respCities] = await Promise.all([
         fetch(urlAddress).then(r => r.json()).catch(() => ({ status: 'ERROR', predictions: [] })),
@@ -304,6 +330,22 @@ class GoogleMapsService {
       });
 
       let merged = Array.from(mergedMap.values());
+      
+      // Sort results by relevance if user location is available
+      if (userLocation && userLocation.latitude && userLocation.longitude) {
+        merged.sort((a, b) => {
+          // Prioritize results that contain the user's country/region
+          const userCountry = this.getCountryFromLocation(userLocation);
+          const aHasUserCountry = a.description.toLowerCase().includes(userCountry.toLowerCase());
+          const bHasUserCountry = b.description.toLowerCase().includes(userCountry.toLowerCase());
+          
+          if (aHasUserCountry && !bHasUserCountry) return -1;
+          if (!aHasUserCountry && bHasUserCountry) return 1;
+          
+          // Then prioritize by description length (shorter = more specific)
+          return a.description.length - b.description.length;
+        });
+      }
       if (merged.length === 0) {
         // Fallback: Places Text Search for localities (cities)
         try {
@@ -387,6 +429,62 @@ class GoogleMapsService {
       return null;
     } catch (error) {
       console.error('Error geocoding address:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Reverse geocode coordinates to address
+   */
+  async reverseGeocode(latitude, longitude) {
+    if (!this.apiKey || this.apiKey === 'YOUR_GOOGLE_MAPS_API_KEY') {
+      console.log('Google Maps integration not enabled');
+      return null;
+    }
+
+    try {
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${this.apiKey}`;
+
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (data.status === 'OK' && data.results.length > 0) {
+        // Get the most relevant address (usually the first result)
+        const result = data.results[0];
+        
+        // Try to get a short, readable address
+        // Look for street address, neighborhood, or locality
+        const addressComponents = result.address_components;
+        
+        // Try to construct a concise address
+        let street = '';
+        let city = '';
+        
+        for (const component of addressComponents) {
+          if (component.types.includes('route') || component.types.includes('street_address')) {
+            street = component.long_name;
+          } else if (component.types.includes('locality')) {
+            city = component.long_name;
+          } else if (!city && component.types.includes('administrative_area_level_1')) {
+            city = component.long_name;
+          }
+        }
+        
+        // Return formatted address
+        if (street && city) {
+          return `${street}, ${city}`;
+        } else if (city) {
+          return city;
+        } else {
+          // Fallback to formatted address
+          return result.formatted_address;
+        }
+      }
+
+      console.error('Reverse geocoding error:', data.status);
+      return null;
+    } catch (error) {
+      console.error('Error reverse geocoding:', error);
       return null;
     }
   }
