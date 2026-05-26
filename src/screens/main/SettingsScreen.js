@@ -166,54 +166,6 @@ const SettingsScreen = ({ navigation }) => {
     return true;
   };
 
-  const testNotification = async () => {
-    try {
-      console.log('🧪 Testing notification...');
-      
-      // Test immediate notification
-      PushNotification.localNotification({
-        channelId: 'reminders',
-        title: '🧪 Test Notification',
-        message: 'This is a test notification from OnTimeHero!',
-        playSound: true,
-        soundName: 'default',
-        vibrate: true,
-        importance: 4,
-        smallIcon: 'ic_launcher',
-        userInfo: {
-          type: 'test',
-          timestamp: new Date().toISOString(),
-        },
-      });
-
-      // Test scheduled notification (5 seconds from now)
-      const testEvent = {
-        id: 'test_event_' + Date.now(),
-        title: 'Test Event',
-        startTime: new Date(Date.now() + 5000), // 5 seconds from now
-        location: 'Test Location',
-        travelTime: 15
-      };
-
-      await NotificationService.scheduleEventNotifications(testEvent);
-      
-      Alert.alert(
-        'Test Notification Sent!',
-        'You should receive a test notification immediately and another one in 5 seconds.',
-        [{ text: 'OK' }]
-      );
-      
-      console.log('✅ Test notification sent successfully');
-    } catch (error) {
-      console.error('❌ Error testing notification:', error);
-      Alert.alert(
-        'Test Failed',
-        'Could not send test notification. Please check your notification permissions.',
-        [{ text: 'OK' }]
-      );
-    }
-  };
-
   const openOverlaySettings = async () => {
     try {
       if (Platform.OS === 'android') {
@@ -604,13 +556,6 @@ const SettingsScreen = ({ navigation }) => {
               description="Get reminded about upcoming events"
               value={notificationsEnabled}
               onValueChange={handleNotificationToggle}
-            />
-
-            <SettingItem
-              icon="bug-report"
-              label="Test Notifications"
-              description="Send a test notification to verify they're working"
-              onPress={testNotification}
             />
 
             <SettingToggle

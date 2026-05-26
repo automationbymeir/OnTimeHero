@@ -3,12 +3,15 @@ import { View, Text, StyleSheet } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import { getTextShadow } from '../../styles/theme';
 
+// XP needed to reach a given level: 100 * N * (N+1) / 2  (matches GamificationService)
+const totalXPForLevel = (lvl) => 100 * lvl * (lvl + 1) / 2;
+
 const XPProgressBar = ({ currentXP, level, style }) => {
-  const currentLevelXP = (level - 1) * 100;
-  const nextLevelXP = level * 100;
+  const currentLevelXP = totalXPForLevel(level - 1);
+  const nextLevelXP = totalXPForLevel(level);
   const progressXP = currentXP - currentLevelXP;
   const maxProgressXP = nextLevelXP - currentLevelXP;
-  const progressPercentage = (progressXP / maxProgressXP) * 100;
+  const progressPercentage = Math.min(100, Math.max(0, (progressXP / maxProgressXP) * 100));
 
   const getLevelColor = () => {
     if (level >= 20) return ['#ffd700', '#ffed4e'];
@@ -30,7 +33,7 @@ const XPProgressBar = ({ currentXP, level, style }) => {
       <View style={styles.progressContainer}>
         <View style={styles.xpInfo}>
           <Text style={[styles.xpText, getTextShadow()]}>{currentXP} XP</Text>
-          <Text style={[styles.nextLevelText, getTextShadow()]}>{nextLevelXP - currentXP} XP to next level</Text>
+          <Text style={[styles.nextLevelText, getTextShadow()]}>{Math.max(0, nextLevelXP - currentXP)} XP to next level</Text>
         </View>
         
         <View style={styles.progressBarContainer}>

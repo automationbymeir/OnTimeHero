@@ -73,13 +73,28 @@ class GamificationService {
     ];
 
     this.badges = {
-      first_steps: { name: 'First Steps', description: 'First on-time event', icon: '👣', color: '#4CAF50' },
-      early_bird: { name: 'Early Bird', description: 'Arrived early', icon: '🐦', color: '#FFD700' },
-      punctual_pro: { name: 'Punctuality Pro', description: '5 events on time', icon: '⏰', color: '#2196F3' },
-      perfect_week: { name: 'Perfect Week', description: '7-day streak', icon: '🔥', color: '#FF5722' },
-      focused_mind: { name: 'Focused Mind', description: 'Used focus mode', icon: '🧘', color: '#9C27B0' },
-      time_master: { name: 'Time Master', description: 'Reached Level 10', icon: '👑', color: '#FFD700' },
-      voice_commander: { name: 'Voice Commander', description: '5 voice events', icon: '🎤', color: '#E91E63' },
+      // Client-side achievements
+      first_steps:     { name: 'First Steps',      description: 'First on-time event',         icon: '👣', color: '#4CAF50' },
+      early_bird:      { name: 'Early Bird',        description: 'Arrived early',               icon: '🐦', color: '#FFD700' },
+      punctual_pro:    { name: 'Punctuality Pro',   description: '5 events on time',            icon: '⏰', color: '#2196F3' },
+      perfect_week:    { name: 'Perfect Week',      description: '7-day streak',                icon: '🔥', color: '#FF5722' },
+      focused_mind:    { name: 'Focused Mind',      description: 'Used focus mode',             icon: '🧘', color: '#9C27B0' },
+      time_master:     { name: 'Time Master',       description: 'Reached Level 10',            icon: '👑', color: '#FFD700' },
+      voice_commander: { name: 'Voice Commander',   description: '5 voice events',              icon: '🎤', color: '#E91E63' },
+      // Cloud Function — event milestones
+      event_1:         { name: 'First Mission',     description: 'Created first event',         icon: '🚀', color: '#4CAF50' },
+      event_10:        { name: 'Seasoned Hero',     description: '10 events created',           icon: '🦸', color: '#2196F3' },
+      event_50:        { name: 'OnTime Legend',     description: '50 events created',           icon: '🏆', color: '#FFD700' },
+      // Cloud Function — streak milestones
+      streak_3:        { name: '3 Day Streak',      description: '3 days on time in a row',     icon: '🔥', color: '#FF9800' },
+      streak_7:        { name: 'Week Warrior',      description: '7 days on time in a row',     icon: '⚡', color: '#FF5722' },
+      streak_14:       { name: 'Fortnight Fighter', description: '14 days on time in a row',    icon: '💪', color: '#F44336' },
+      streak_30:       { name: 'Monthly Master',    description: '30 days on time in a row',    icon: '🌟', color: '#E91E63' },
+      // Cloud Function — punctuality milestones
+      punctual_80:     { name: 'Reliable',          description: '80% punctuality score',       icon: '✅', color: '#4CAF50' },
+      punctual_90:     { name: 'Time Champion',     description: '90% punctuality score',       icon: '🥈', color: '#2196F3' },
+      punctual_95:     { name: 'Chronometer',       description: '95% punctuality score',       icon: '🥇', color: '#FF9800' },
+      punctual_100:    { name: 'Perfect Timer',     description: '100% punctuality score',      icon: '💎', color: '#9C27B0' },
     };
   }
 
