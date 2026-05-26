@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import WalkthroughOverlay, { WALKTHROUGH_KEY } from '../../components/WalkthroughOverlay';
 import {
   View,
   Text,
@@ -61,6 +63,7 @@ const DashboardScreen = ({ navigation }) => {
   const [userName, setUserName] = useState('User');
   const [notificationCount, setNotificationCount] = useState(0);
   const [forceUpdate, setForceUpdate] = useState(0);
+  const [showWalkthrough, setShowWalkthrough] = useState(false);
 
   const backgroundImage = getBackgroundImage();
   const fadeColors = getFadeGradient();
@@ -118,7 +121,6 @@ const DashboardScreen = ({ navigation }) => {
   // Load notification count
   const loadNotificationCount = async () => {
     try {
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       const notifications = await AsyncStorage.getItem('userNotifications');
       if (notifications) {
         const parsedNotifications = JSON.parse(notifications);
@@ -143,6 +145,12 @@ const DashboardScreen = ({ navigation }) => {
       console.log('🚀 Dashboard: Location obtained, loading events');
       await loadEvents(location);
       console.log('🚀 Dashboard: Events loaded, initialization complete');
+
+      // Show walkthrough on first launch
+      const walkthroughDone = await AsyncStorage.getItem(WALKTHROUGH_KEY);
+      if (!walkthroughDone) {
+        setShowWalkthrough(true);
+      }
     };
     initialize();
   }, []);
@@ -1044,24 +1052,6 @@ const DashboardScreen = ({ navigation }) => {
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: Colors.status.danger + '20' }]}
-          onPress={() => {
-            console.log('🧪 Dashboard: Testing reset directly...');
-            DeviceEventEmitter.emit('STATS_RESET');
-            DeviceEventEmitter.emit('POINTS_UPDATED', {
-              points: 0,
-              level: 1,
-              currentStreak: 0,
-              xpForNextLevel: 100,
-            });
-          }}
-        >
-          <Icon name="restore" size={32} color={Colors.status.danger} />
-          <Text style={[Typography.caption, styles.actionText, getSubtleTextShadow()]}>
-            Test Reset
-          </Text>
-        </TouchableOpacity>
               </View>
             </View>
 
@@ -1122,6 +1112,10 @@ const DashboardScreen = ({ navigation }) => {
       </ScrollView>
         </LinearGradient>
       </ImageBackground>
+
+      {showWalkthrough && (
+        <WalkthroughOverlay onComplete={() => setShowWalkthrough(false)} />
+      )}
     </View>
   );
 };
